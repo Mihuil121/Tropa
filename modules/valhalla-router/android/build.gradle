@@ -1,0 +1,27 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.valhallarouter'
+version = '0.1.0'
+
+// Версии можно переопределить в android/gradle.properties:
+//   valhallaMobileVersion=0.6.4
+//   valhallaModelsVersion=0.6.0
+def valhallaMobileVersion = rootProject.findProperty('valhallaMobileVersion') ?: '0.6.4'
+def valhallaModelsVersion = rootProject.findProperty('valhallaModelsVersion') ?: '0.6.0'
+
+android {
+  namespace "expo.modules.valhallarouter"
+  defaultConfig {
+    versionCode 1
+    versionName "0.1.0"
+  }
+}
+
+dependencies {
+  implementation "io.github.rallista:valhalla-mobile:${valhallaMobileVersion}"
+  implementation "io.github.rallista:valhalla-models:${valhallaModelsVersion}"
+  implementation "io.github.rallista:valhalla-models-config:${valhallaModelsVersion}"
+}

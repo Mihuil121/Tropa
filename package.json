@@ -1,0 +1,42 @@
+{
+  "name": "tropa-nav",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "dependencies": {
+    "@expo/vector-icons": "^15.1.1",
+    "@mapbox/vector-tile": "^2.0.5",
+    "@maplibre/maplibre-react-native": "^11.5.0",
+    "@protomaps/basemaps": "^5.7.2",
+    "expo": "~58.0.14",
+    "expo-build-properties": "~58.0.11",
+    "expo-document-picker": "~58.0.4",
+    "expo-file-system": "~58.0.9",
+    "expo-keep-awake": "~58.0.3",
+    "expo-location": "~58.0.17",
+    "expo-sensors": "~58.0.4",
+    "expo-speech": "~58.0.3",
+    "expo-status-bar": "~58.0.3",
+    "expo-system-ui": "~58.0.6",
+    "fflate": "^0.8.3",
+    "pbf": "^4.0.2",
+    "pmtiles": "^4.5.0",
+    "react": "19.3.0",
+    "react-native": "0.88.0"
+  },
+  "devDependencies": {
+    "@types/react": "~19.3.0",
+    "typescript": "~6.0.3"
+  },
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web",
+    "sim": "node sim/drive.ts",
+    "test": "node --test sim/test.ts sim/network.test.ts sim/regions.test.ts",
+    "typecheck": "tsc --noEmit",
+    "prebuild:android": "expo prebuild --platform android --no-install",
+    "sim:walk": "node sim/walk.ts"
+  },
+  "private": true
+}

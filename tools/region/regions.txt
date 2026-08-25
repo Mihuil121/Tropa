@@ -1,0 +1,7 @@
+# id        | название                  | запад,юг,восток,север   | исходник OSM на Geofabrik (download.geofabrik.de/<путь>-latest.osm.pbf)
+# Границы — прямоугольники; для своих областей возьмите bbox на bboxfinder.com
+crimea      | Крым и Севастополь        | 32.40,44.35,36.70,46.25 | russia/crimean-fed-district
+moscow      | Москва и область          | 35.10,54.20,40.25,56.98 | russia/central-fed-district
+spb         | Санкт-Петербург и область | 27.70,58.40,35.75,61.35 | russia/northwestern-fed-district
+krasnodar   | Краснодарский край        | 36.55,43.35,41.75,46.90 | russia/south-fed-district
+rostov      | Ростовская область        | 38.20,45.95,44.35,50.25 | russia/south-fed-district

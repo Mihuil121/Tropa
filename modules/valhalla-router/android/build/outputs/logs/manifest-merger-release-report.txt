@@ -1,0 +1,16 @@
+-- Merging decision tree log ---
+manifest
+ADDED from /home/misha/Документы/tropa-nav/modules/valhalla-router/android/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest10431550872529266283.xml:2:13-83
+INJECTED from /home/misha/Документы/tropa-nav/modules/valhalla-router/android/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest10431550872529266283.xml:2:13-83
+	package
+		INJECTED from /home/misha/Документы/tropa-nav/modules/valhalla-router/android/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest10431550872529266283.xml
+	xmlns:android
+		ADDED from /home/misha/Документы/tropa-nav/modules/valhalla-router/android/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest10431550872529266283.xml:2:23-81
+uses-sdk
+INJECTED from /home/misha/Документы/tropa-nav/modules/valhalla-router/android/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest10431550872529266283.xml reason: use-sdk injection requested
+INJECTED from /home/misha/Документы/tropa-nav/modules/valhalla-router/android/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest10431550872529266283.xml
+INJECTED from /home/misha/Документы/tropa-nav/modules/valhalla-router/android/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest10431550872529266283.xml
+	android:targetSdkVersion
+		INJECTED from /home/misha/Документы/tropa-nav/modules/valhalla-router/android/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest10431550872529266283.xml
+	android:minSdkVersion
+		INJECTED from /home/misha/Документы/tropa-nav/modules/valhalla-router/android/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest10431550872529266283.xml
