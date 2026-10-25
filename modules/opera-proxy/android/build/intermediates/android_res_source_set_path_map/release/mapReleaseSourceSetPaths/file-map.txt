@@ -1,9 +1,0 @@
-expo.modules.operaproxy.opera-proxy-pngs-0 /home/misha/Документы/tropa-nav/modules/opera-proxy/android/build/generated/res/pngs/release
-expo.modules.operaproxy.opera-proxy-updated_navigation_xml-1 /home/misha/Документы/tropa-nav/modules/opera-proxy/android/build/generated/updated_navigation_xml/release
-expo.modules.operaproxy.opera-proxy-mergeReleaseResources-2 /home/misha/Документы/tropa-nav/modules/opera-proxy/android/build/intermediates/incremental/release/mergeReleaseResources/merged.dir
-expo.modules.operaproxy.opera-proxy-mergeReleaseResources-3 /home/misha/Документы/tropa-nav/modules/opera-proxy/android/build/intermediates/incremental/release/mergeReleaseResources/stripped.dir
-expo.modules.operaproxy.opera-proxy-release-4 /home/misha/Документы/tropa-nav/modules/opera-proxy/android/build/intermediates/merged_res/release/mergeReleaseResources
-expo.modules.operaproxy.opera-proxy-release-5 /home/misha/Документы/tropa-nav/modules/opera-proxy/android/build/intermediates/packaged_res/release/packageReleaseResources
-expo.modules.operaproxy.opera-proxy-main-6 /home/misha/Документы/tropa-nav/modules/opera-proxy/android/src/main/res
-expo.modules.operaproxy.opera-proxy-release-7 /home/misha/Документы/tropa-nav/modules/opera-proxy/android/src/release/res
-gradleHome-0 /home/misha/.gradle

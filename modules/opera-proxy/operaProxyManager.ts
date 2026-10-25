@@ -1,5 +1,6 @@
 import type { OperaProxyOptions, OperaProxyStatus } from './index.ts';
-import { shouldRestart, maskSensitive } from './logic.ts';
+import { shouldRestart, maskSensitive, validateOptions } from './logic.ts';
+import { dlog, dlogError } from '../../src/debugLog.ts';
 
 type NativeModule = {
   isSupported(): boolean;
@@ -31,8 +32,13 @@ export function createOperaProxyManager(native: NativeModule | null, deps: Manag
   let failureTimestamps: number[] = [];
   let logSub: { remove: () => void } | null = null;
   let timer: any = null;
+  let lastNotifiedStatus: OperaProxyStatus = { state: 'stopped' };
 
   function notify(st: OperaProxyStatus) {
+    if (st.state === lastNotifiedStatus.state && st.port === lastNotifiedStatus.port && st.lastError === lastNotifiedStatus.lastError && st.country === lastNotifiedStatus.country) {
+      return;
+    }
+    lastNotifiedStatus = st;
     listeners.forEach((l) => { try { l(st); } catch {} });
   }
 
@@ -46,6 +52,13 @@ export function createOperaProxyManager(native: NativeModule | null, deps: Manag
     } catch {}
   }
 
+  function removeLogSub() {
+    if (logSub) {
+      try { logSub.remove(); } catch {}
+      logSub = null;
+    }
+  }
+
   function subscribe(listener: Listener): () => void {
     listeners.add(listener);
     try {
@@ -54,19 +67,29 @@ export function createOperaProxyManager(native: NativeModule | null, deps: Manag
         if (st) listener(st);
       }
     } catch {}
-    setupLogSub();
     return () => {
       listeners.delete(listener);
-      if (listeners.size === 0 && logSub) {
-        try { logSub.remove(); } catch {}
-        logSub = null;
-      }
     };
   }
 
   function start(opts?: OperaProxyOptions) {
-    lastOptions = opts;
     if (!native?.isSupported()) return;
+    const currentStatus = native.status();
+    const vNew = validateOptions(opts);
+    const vOld = validateOptions(lastOptions);
+
+    if ((currentStatus.state === 'starting' || currentStatus.state === 'ready') &&
+        lastOptions &&
+        vOld.country === vNew.country &&
+        vOld.serverSelection === vNew.serverSelection &&
+        vOld.initRetries === vNew.initRetries &&
+        vOld.timeout === vNew.timeout &&
+        vOld.apiProxyFile === vNew.apiProxyFile &&
+        vOld.probeHost === vNew.probeHost) {
+      return;
+    }
+
+    lastOptions = opts;
     setupLogSub();
     native.start(opts)
       .then((res) => {
@@ -89,6 +112,7 @@ export function createOperaProxyManager(native: NativeModule | null, deps: Manag
   function stop() {
     lastOptions = undefined;
     failureTimestamps = [];
+    removeLogSub();
     if (!native?.isSupported()) return;
     native.stop();
     const st = native.status();
@@ -117,6 +141,8 @@ export function createOperaProxyManager(native: NativeModule | null, deps: Manag
           dlog('opera-proxy: попытка авто-перезапуска после сбоя...');
           start(lastOptions);
         }
+      } else if (st.state === 'stopped') {
+        removeLogSub();
       }
     } catch {}
   }, 2000);
@@ -125,6 +151,6 @@ export function createOperaProxyManager(native: NativeModule | null, deps: Manag
     subscribe,
     start,
     stop,
-    status: () => native?.isSupported() ? native.status() : { state: 'stopped' as const },
+    status: () => native?.isSupported() ? native.status() : { state: 'failed' as const, lastError: 'Не поддерживается на этом устройстве' },
   };
 }

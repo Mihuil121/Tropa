@@ -49,9 +49,16 @@ class OperaProxyModule : Module() {
 
     Function("status") {
       synchronized(lock) {
+        if (!isSupported()) {
+          return@Function mapOf(
+            "state" to "failed",
+            "country" to currentCountry,
+            "lastError" to "Не поддерживается на этом устройстве"
+          )
+        }
         mapOf(
           "state" to currentState,
-          "port" to if (currentPort > 0) currentPort else null,
+          "port" to if (currentState == "ready" && currentPort > 0) currentPort else null,
           "country" to currentCountry,
           "lastError" to lastError
         )
@@ -224,6 +231,21 @@ class OperaProxyModule : Module() {
             if (ready && proc.isAlive) {
               currentState = "ready"
               resolveAllPending(mapOf("port" to freePort))
+
+              // Наблюдатель за процессом (waitFor)
+              executor.execute {
+                try {
+                  val exitCode = proc.waitFor()
+                  synchronized(lock) {
+                    if (generationCounter.get() == gen && currentState == "ready") {
+                      currentState = "failed"
+                      val recentLogs = synchronized(logBuffer) { logBuffer.takeLast(5).joinToString("\n") }
+                      lastError = "Процесс завершился с кодом $exitCode\n$recentLogs"
+                      Log.e("OperaProxy", lastError ?: "Процесс упал")
+                    }
+                  }
+                } catch (_: Exception) {}
+              }
             } else {
               stopProcessLocked()
               currentState = "failed"

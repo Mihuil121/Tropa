@@ -58,7 +58,7 @@ export function maskSensitive(line: string): string {
   let res = line;
   const lower = res.toLowerCase();
   if (lower.includes('password') || lower.includes('token') || lower.includes('login') || lower.includes('proxy-authorization')) {
-    res = res.replace(/(password|token|login|proxy-authorization)[:=]\s*\S+/gi, '$1=***');
+    res = res.replace(/(password|token|login|proxy-authorization)[:=]\s*.+/gi, '$1: ***');
   }
   return res;
 }

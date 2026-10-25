@@ -1,9 +1,0 @@
-expo.modules.valhallarouter.valhalla-router-pngs-0 /home/misha/Документы/tropa-nav/modules/valhalla-router/android/build/generated/res/pngs/release
-expo.modules.valhallarouter.valhalla-router-updated_navigation_xml-1 /home/misha/Документы/tropa-nav/modules/valhalla-router/android/build/generated/updated_navigation_xml/release
-expo.modules.valhallarouter.valhalla-router-mergeReleaseResources-2 /home/misha/Документы/tropa-nav/modules/valhalla-router/android/build/intermediates/incremental/release/mergeReleaseResources/merged.dir
-expo.modules.valhallarouter.valhalla-router-mergeReleaseResources-3 /home/misha/Документы/tropa-nav/modules/valhalla-router/android/build/intermediates/incremental/release/mergeReleaseResources/stripped.dir
-expo.modules.valhallarouter.valhalla-router-release-4 /home/misha/Документы/tropa-nav/modules/valhalla-router/android/build/intermediates/merged_res/release/mergeReleaseResources
-expo.modules.valhallarouter.valhalla-router-release-5 /home/misha/Документы/tropa-nav/modules/valhalla-router/android/build/intermediates/packaged_res/release/packageReleaseResources
-expo.modules.valhallarouter.valhalla-router-main-6 /home/misha/Документы/tropa-nav/modules/valhalla-router/android/src/main/res
-expo.modules.valhallarouter.valhalla-router-release-7 /home/misha/Документы/tropa-nav/modules/valhalla-router/android/src/release/res
-gradleHome-0 /home/misha/.gradle
