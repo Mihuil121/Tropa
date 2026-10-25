@@ -8,16 +8,16 @@ import { C, ui, themed, useWide, sz } from './theme';
 
 const KINDS: FuelKind[] = ['92', '95', '98', '100', 'diesel', 'lpg'];
 
-export function FuelSheet({ stations, reports, filter, onFilter, busy, note, onRefresh, onClose, onRoute, onAddStop, onMark }: {
+export function FuelSheet({ stations, reports, filter, onFilter, busy, note, reason, onRefresh, onClose, onRoute, onAddStop, onMark }: {
   stations: FuelStation[]; reports: FuelReports; filter: FuelKind | null; onFilter: (k: FuelKind | null) => void;
-  busy: boolean; note: string; onRefresh: () => void; onClose: () => void;
+  busy: boolean; note: string; reason?: 'ok' | 'empty' | 'network'; onRefresh: () => void; onClose: () => void;
   onRoute: (st: FuelStation) => void; onAddStop?: (st: FuelStation) => void;
   onMark: (st: FuelStation, status: 'yes' | 'low' | 'no') => void;
 }) {
   const { wide, height } = useWide();
   const list = stations.filter((st) => matchesFuel(st, filter));
   const options: (FuelKind | null)[] = [null, ...KINDS];
-  const hasError = !!note && /нет связи|ошибка|не найдено|пробуйте/i.test(note);
+  const hasError = reason === 'network';
   return (
     <View style={[ui.sheet, wide && ui.sheetWide]}>
       <View style={ui.grabber} />

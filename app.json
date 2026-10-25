@@ -59,7 +59,8 @@
         }
       ],
       "./plugins/withGlyphs.js",
-      "./plugins/withValhalla.js"
+      "./plugins/withValhalla.js",
+      "./plugins/withOperaProxy.js"
     ]
   }
 }

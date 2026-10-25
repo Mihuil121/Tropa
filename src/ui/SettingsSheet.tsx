@@ -10,6 +10,7 @@ import type { LatLon } from '../core/geo';
 import { C, ui, themed, useWide, useInsets, sz } from './theme';
 import { oldDevice } from '../device';
 import { voice } from '../voice';
+import OperaProxy from '../../modules/opera-proxy';
 
 type Category = 'maps' | 'view' | 'traffic' | 'sensors' | 'about';
 
@@ -296,6 +297,59 @@ export function SettingsSheet({ data, settings, onSettings, onImport, obd, adapt
                 />
               )}
             </View>
+
+            <View style={s.card}>
+              <View style={s.cardHeader}>
+                <View style={s.cardIcon}><Icon name="shield-key-outline" size={20} color={C.blue} /></View>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.cardTitle}>Обход блокировок (Opera VPN)</Text>
+                  <Text style={s.cardSub}>Локальный прокси для загрузки карт и зеркал</Text>
+                </View>
+                <Switch
+                  value={!!settings.operaProxy}
+                  onValueChange={(v) => {
+                    onSettings({ ...settings, operaProxy: v });
+                    if (v && OperaProxy?.isSupported()) {
+                      OperaProxy.start({ country: settings.operaCountry || 'EU' }).catch(() => {});
+                    } else if (OperaProxy) {
+                      OperaProxy.stop();
+                    }
+                  }}
+                />
+              </View>
+
+              <Text style={[ui.sub, { marginBottom: 10, lineHeight: 18 }]}>
+                Запускает встроенный локальный прокси Opera для загрузки зеркал Overpass и карт. Все данные местоположения обрабатываются на вашем устройстве.
+              </Text>
+
+              {!!settings.operaProxy && (
+                <View style={{ marginTop: 6 }}>
+                  <Text style={[ui.sub, { fontWeight: '700', marginBottom: 6 }]}>Выбор страны прокси:</Text>
+                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
+                    {(['EU', 'AS', 'AM'] as const).map((c) => (
+                      <Pressable
+                        key={c}
+                        onPress={() => {
+                          const nextCountry = c;
+                          onSettings({ ...settings, operaCountry: nextCountry });
+                          if (OperaProxy?.isSupported()) {
+                            OperaProxy.start({ country: nextCountry }).catch(() => {});
+                          }
+                        }}
+                        style={[s.fchip, (settings.operaCountry || 'EU') === c && { backgroundColor: C.blue }]}
+                      >
+                        <Text style={[s.fchipText, (settings.operaCountry || 'EU') === c && { color: '#fff' }]}>
+                          {c === 'EU' ? 'Европа (EU)' : c === 'AS' ? 'Азия (AS)' : 'Америка (AM)'}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                  <Text style={[ui.sub, { color: C.blue, fontWeight: '600' }]}>
+                    Статус: {OperaProxy?.status().state === 'ready' ? `Готов (порт ${OperaProxy.status().port})` : OperaProxy?.status().state === 'starting' ? 'Запускается…' : 'Остановлен'}
+                  </Text>
+                </View>
+              )}
+            </View>
           </>
         )}
 
@@ -442,6 +496,8 @@ const s = themed(() => ({
   bigBanner: { flexDirection: 'row', alignItems: 'center', backgroundColor: C.blue, borderRadius: sz(16), padding: sz(14), marginTop: sz(4) },
   bigTitle: { color: '#fff', fontSize: sz(15), fontWeight: '700' },
   bigSub: { color: '#dbe6ff', fontSize: sz(12), marginTop: 2 },
+  fchip: { backgroundColor: C.chip, borderRadius: sz(14), paddingHorizontal: sz(12), paddingVertical: sz(6) },
+  fchipText: { fontSize: sz(12), fontWeight: '700', color: C.text },
   seg: { flexDirection: 'row', gap: sz(8), marginTop: sz(6) },
   segBtn: { flex: 1, alignItems: 'center', paddingVertical: sz(10), borderRadius: sz(12), backgroundColor: C.chip },
   segSel: { backgroundColor: C.blue },

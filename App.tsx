@@ -140,6 +140,7 @@ export default function App() {
   const [fuelBusy, setFuelBusy] = useState(false);
   const [fuelList, setFuelList] = useState<FuelStation[]>([]);
   const [fuelNote, setFuelNote] = useState('');
+  const [fuelReason, setFuelReason] = useState<'ok' | 'empty' | 'network' | undefined>(undefined);
   const [fuelFilter, setFuelFilter] = useState<FuelKind | null>(null);
   const [fuelReports, setFuelReports] = useState<FuelReports>({});
   const fuelCtrl = useRef<AbortController | null>(null);
@@ -154,6 +155,7 @@ export default function App() {
     try {
       const r = await findFuel({ lat: nav.lat, lon: nav.lon }, c.signal);
       setFuelList(r.stations);
+      setFuelReason(r.reason);
       setFuelNote(r.error ? r.error
         : r.fromCache ? `Нет сети: показаны данные от ${new Date(r.cachedAt ?? Date.now()).toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' })}`
         : r.stations.length ? '' : 'Заправок рядом не нашлось');
@@ -1136,7 +1138,7 @@ export default function App() {
             paint={{ 'text-color': C.text, 'text-halo-color': C.card, 'text-halo-width': 1.5 }} />
         </GeoJSONSource>
         <GeoJSONSource id="fuel" data={fuelGeo} cluster clusterRadius={45}>
-          <Layer type="circle" id="fuel-cluster" filter={['has', 'point_count']} paint={{ 'circle-radius': 17, 'circle-color': '#2f9e44', 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 }} />
+          <Layer type="circle" id="fuel-cluster" filter={['has', 'point_count']} paint={{ 'circle-radius': 17, 'circle-color': '#1c7ed6', 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 }} />
           <Layer type="symbol" id="fuel-cluster-n" filter={['has', 'point_count']}
             layout={{ 'text-field': ['get', 'point_count_abbreviated'], 'text-font': ['Noto Sans Regular'], 'text-size': 13, 'text-allow-overlap': true }}
             paint={{ 'text-color': '#ffffff' }} />
@@ -1281,7 +1283,7 @@ export default function App() {
       )}
 
       {fuelOn && (screen === 'map' || screen === 'nav' || screen === 'preview') && (
-        <Appear key="fuel"><FuelSheet stations={fuelList} reports={fuelReports} filter={fuelFilter} onFilter={setFuelFilter} busy={fuelBusy} note={fuelNote}
+        <Appear key="fuel"><FuelSheet stations={fuelList} reports={fuelReports} filter={fuelFilter} onFilter={setFuelFilter} busy={fuelBusy} note={fuelNote} reason={fuelReason}
           onRefresh={loadFuel} onClose={toggleFuel} onRoute={routeToFuel}
           onAddStop={screen === 'map' && !dest ? undefined : (st) => { setFuelOn(false); addStop({ name: st.name, lat: st.lat, lon: st.lon }); }}
           onMark={markFuel} /></Appear>

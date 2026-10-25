@@ -41,6 +41,8 @@ export type Settings = {
   gTrafficUrl?: string;
   yandex?: boolean;       // пробки Яндекса: читаем цвет плиток под маршрутом, рисуем сами
   yandexUrl?: string;     // свой адрес плиток (если старый перестанет работать) // в пути при интернете подкачивать впереди: карту+вышки / только вышки / ничего
+  operaProxy?: boolean;   // обход блокировок через Opera VPN (локальный прокси)
+  operaCountry?: 'EU' | 'AS' | 'AM';
 };
 
 export type Loaded = {

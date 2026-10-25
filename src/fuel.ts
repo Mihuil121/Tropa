@@ -3,14 +3,10 @@
 
 import { Directory, File, Paths } from 'expo-file-system';
 import { dlog, dlogError } from './debugLog.ts';
-import { fetchJson, firstOk } from './net.ts';
+import { fetchJson, firstOk, type FetchOpts } from './net.ts';
+import { parseReports, type FuelKind, type FuelReports, type FuelStation, type FuelResult, type LatLonP } from './fuelStatus.ts';
+import { findFuelWith } from './fuelCore.ts';
 export * from './fuelStatus.ts';
-
-export type LatLonP = { lat: number; lon: number };
-export type FuelStation = { id: string; name: string; brand?: string; lat: number; lon: number; distM: number; fuels: FuelKind[]; openingHours?: string };
-export type FuelResult = { stations: FuelStation[]; fromCache: boolean; cachedAt?: number; error?: string; reason?: 'ok' | 'network' | 'empty' };
-
-import { FUEL_LABEL, type FuelKind, type FuelReports, type FuelReportItem } from './fuelStatus.ts';
 
 const TAG: Record<FuelKind, string> = { '92': 'fuel:octane_92', '95': 'fuel:octane_95', '98': 'fuel:octane_98', '100': 'fuel:octane_100', diesel: 'fuel:diesel', lpg: 'fuel:lpg' };
 
@@ -36,7 +32,7 @@ function withDist(list: FuelStation[], c: LatLonP): FuelStation[] {
   return list.map((s) => ({ ...s, distM: Math.round(distM(c, s)) })).sort((a, b) => a.distM - b.distM);
 }
 
-export async function fuelFetch(url: string, init?: RequestInit): Promise<any> {
+export async function fuelFetch(url: string, init?: FetchOpts): Promise<any> {
   return fetchJson(url, init);
 }
 
@@ -50,7 +46,7 @@ async function fetchAround(c: LatLonP, km: number, signal?: AbortSignal): Promis
       body: `data=${encodeURIComponent(q)}`,
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       signal: sig, timeoutMs: 20_000,
-    } as any),
+    }),
   })), { signal, staggerMs: 4000, budgetMs: 30_000 });
   const out: FuelStation[] = [];
   for (const el of json?.elements ?? []) {
@@ -76,33 +72,12 @@ async function loadCache(c: LatLonP): Promise<FuelResult | null> {
     if (!j?.c || !Array.isArray(j.list)) return null;
     const d = distM(j.c, c);
     if (d > 30_000) return null;
-    return { stations: withDist(j.list, c), fromCache: true, cachedAt: j.t, reason: d > 10_000 ? 'network' : 'ok' };
+    return { stations: withDist(j.list, c), fromCache: true, cachedAt: j.t, reason: 'ok', stale: d > 10_000 };
   } catch { return null; }
 }
 
-/** Заправки рядом: радиус 5 → 10 → 20 км, пока что-то не найдётся. Нет связи — берём кэш рядом с этим местом (до 30 км). */
 export async function findFuel(c: LatLonP, signal?: AbortSignal): Promise<FuelResult> {
-  try {
-    for (const km of [5, 10, 20]) {
-      const list = await fetchAround(c, km, signal);
-      if (list.length) {
-        void saveCache(c, list);
-        dlog(`заправки: ${list.length} в радиусе ${km} км`);
-        return { stations: list, fromCache: false, reason: 'ok' };
-      }
-    }
-    const cached = await loadCache(c);
-    if (cached && cached.stations.length) return cached;
-    return { stations: [], fromCache: false, reason: 'empty', error: 'Заправок поблизости не найдено' };
-  } catch (e: any) {
-    if (e?.name === 'AbortError') throw e;
-    dlogError('заправки: Overpass', e);
-    const cached = await loadCache(c);
-    if (cached && cached.stations.length) {
-      return { ...cached, error: 'Нет связи с интернетом. Показан сохраненный кэш.' };
-    }
-    return { stations: [], fromCache: false, reason: 'network', error: 'Нет связи с картой заправок. Проверьте интернет или VPN.' };
-  }
+  return findFuelWith({ fetchAround, loadCache, saveCache, log: { info: dlog, error: dlogError } }, c, signal);
 }
 
 // ---------- Личные отметки «есть / нет бензина» (только на этом телефоне) ----------
@@ -116,22 +91,7 @@ export async function loadReports(): Promise<FuelReports> {
     ensureDir();
     const f = reportsFile();
     if (f.exists) {
-      const j = JSON.parse(await f.text());
-      if (j && typeof j === 'object') {
-        for (const [id, val] of Object.entries(j)) {
-          if (val && typeof val === 'object' && 'status' in val) {
-            const st = (val as any).status;
-            const t = Number((val as any).t) || Date.now();
-            if (st === 'yes' || st === 'low' || st === 'no') {
-              r[id] = { status: st, t };
-            } else if (st === true) {
-              r[id] = { status: 'yes', t };
-            } else if (st === false) {
-              r[id] = { status: 'no', t };
-            }
-          }
-        }
-      }
+      r = parseReports(JSON.parse(await f.text()));
     }
   } catch (e) { dlogError('fuel-reports: чтение', e); }
   reports = r;

@@ -175,3 +175,89 @@ test('fuel: displayStatus граница 3ч и 12ч', async () => {
   assert.equal(s4.color, '#868e96');
 });
 
+test('fuel: displayStatus ровно на границе 3 часа и 12 часов', async () => {
+  const { displayStatus } = await import('../src/fuelStatus.ts');
+  const now = 1_000_000_000_000;
+  const exact3h = displayStatus({ status: 'yes', t: now - 3 * 3600_000 }, now);
+  assert.equal(exact3h.color, '#f59f00');
+
+  const exact12h = displayStatus({ status: 'no', t: now - 12 * 3600_000 }, now);
+  assert.equal(exact12h.status, 'unknown');
+  assert.equal(exact12h.color, '#868e96');
+});
+
+test('fuel: parseReports миграция и фильтрация', async () => {
+  const { parseReports } = await import('../src/fuelStatus.ts');
+  const now = Date.now();
+  const raw = {
+    valid1: { status: 'yes', t: now },
+    valid2: { status: 'low', t: now },
+    valid3: { status: 'no', t: now },
+    badT1: { status: 'yes', t: 0 },
+    badT2: { status: 'yes', t: 'invalid' },
+    noT: { status: 'yes' },
+    badStatus: { status: 'unknown', t: now },
+    oldTrue: { status: true, t: now },
+  };
+  const res = parseReports(raw);
+  assert.deepEqual(Object.keys(res).sort(), ['valid1', 'valid2', 'valid3']);
+  assert.equal(res.valid1.status, 'yes');
+  assert.equal(res.valid2.status, 'low');
+  assert.equal(res.valid3.status, 'no');
+});
+
+test('fuel: findFuelWith при ошибке сети и наличии/отсутствии кэша', async () => {
+  const { findFuelWith } = await import('../src/fuelCore.ts');
+  const c = { lat: 44.6, lon: 33.5 };
+
+  const res1 = await findFuelWith({
+    fetchAround: async () => { throw new Error('network error'); },
+    loadCache: async () => null,
+    saveCache: async () => {},
+  }, c);
+  assert.equal(res1.reason, 'network');
+  assert.deepEqual(res1.stations, []);
+
+  const res2Fresh = await findFuelWith({
+    fetchAround: async () => { throw new Error('network error'); },
+    loadCache: async () => ({ stations: [{ id: '1', name: 'АЗС', lat: 44.6, lon: 33.5, distM: 100, fuels: [] }], fromCache: true, reason: 'ok', stale: false }),
+    saveCache: async () => {},
+  }, c);
+  assert.equal(res2Fresh.reason, 'network');
+  assert.equal(res2Fresh.stale, false);
+
+  const res2Stale = await findFuelWith({
+    fetchAround: async () => { throw new Error('network error'); },
+    loadCache: async () => ({ stations: [{ id: '1', name: 'АЗС', lat: 44.6, lon: 33.5, distM: 100, fuels: [] }], fromCache: true, reason: 'ok', stale: true }),
+    saveCache: async () => {},
+  }, c);
+  assert.equal(res2Stale.reason, 'network');
+  assert.equal(res2Stale.stale, true);
+
+  const res3 = await findFuelWith({
+    fetchAround: async () => [],
+    loadCache: async () => null,
+    saveCache: async () => {},
+  }, c);
+  assert.equal(res3.reason, 'empty');
+  assert.deepEqual(res3.stations, []);
+
+  const abortErr = new Error('aborted');
+  abortErr.name = 'AbortError';
+  await assert.rejects(findFuelWith({
+    fetchAround: async () => { throw abortErr; },
+    loadCache: async () => null,
+    saveCache: async () => {},
+  }, c), (e: any) => e.name === 'AbortError');
+});
+
+test('opera-proxy: проверка аргументов и состояния модуля', async () => {
+  const options = { country: 'EU', serverSelection: 'first', initRetries: 3, timeout: '10s' };
+  assert.equal(options.country, 'EU');
+  assert.equal(options.serverSelection, 'first');
+  assert.equal(options.initRetries, 3);
+  assert.equal(options.timeout, '10s');
+});
+
+
+

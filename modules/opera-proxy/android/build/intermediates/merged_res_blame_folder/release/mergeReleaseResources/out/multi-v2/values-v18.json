@@ -1,0 +1,34 @@
+{
+    "logs": [
+        {
+            "outputFile": "expo.modules.operaproxy.opera-proxy-mergeReleaseResources-27:/values-v18/values-v18.xml",
+            "map": [
+                {
+                    "source": "/home/misha/.gradle/caches/9.4.1/transforms/1bb0f55fcb3d4df668a3081d885e0ed4/transformed/appcompat-1.7.0/res/values-v18/values-v18.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endColumns": "48",
+                        "endOffsets": "99"
+                    }
+                }
+            ]
+        },
+        {
+            "outputFile": "expo.modules.operaproxy.opera-proxy-release-29:/values-v18/values-v18.xml",
+            "map": [
+                {
+                    "source": "/home/misha/.gradle/caches/9.4.1/transforms/1bb0f55fcb3d4df668a3081d885e0ed4/transformed/appcompat-1.7.0/res/values-v18/values-v18.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endColumns": "48",
+                        "endOffsets": "99"
+                    }
+                }
+            ]
+        }
+    ]
+}
