@@ -121,6 +121,7 @@ export default function App() {
   const [mode, setMode] = useState<TravelMode>('car');
   const [plan, setPlan] = useState<PlannedRoute | null>(null);
   const [follow, setFollow] = useState(true);
+  const [mapBearing, setMapBearing] = useState(0);
   const [picking, setPicking] = useState(false);
   const [sheet, setSheet] = useState<'none' | 'settings' | 'maps' | 'regions'>('none');
   const [mapsSummary, setMapsSummary] = useState('Выберите города — Крым, юг, Москва…');
@@ -1051,6 +1052,10 @@ export default function App() {
         logo={false}
         attributionPosition={{ bottom: 8, left: 8 }}
         onRegionWillChange={(e) => { if (e.nativeEvent.userInteraction) setFollow(false); }}
+        onRegionDidChange={(e) => {
+          const b = (e as any)?.properties?.heading ?? (e as any)?.geometry?.heading ?? 0;
+          if (Math.abs(b - mapBearing) > 2) setMapBearing(Math.round(b));
+        }}
         onPress={(e) => {
           if (!picking) return;
           const [lon, lat] = e.nativeEvent.lngLat;
@@ -1205,6 +1210,7 @@ export default function App() {
       {screen !== 'search' && screen !== 'preview' && sheet === 'none' && !fuelOn && (
         <View style={[s.side, { bottom: bottom + sz(compact ? 100 : 118) }, screen === 'nav' && { bottom: sz(230) }]}>
           <MapButtonGroup items={[
+            ...(Math.abs(mapBearing) > 5 ? [{ icon: 'compass-outline' as IconName, active: true, onPress: () => { setMapBearing(0); setFollow(true); setToast('Карта ориентирована на север'); } }] : []),
             ...(screen === 'nav' ? [{ icon: 'gas-station' as IconName, active: fuelOn, onPress: toggleFuel }] : []),
             { icon: 'cog-outline', onPress: () => setSheet('settings') },
             { icon: view3d ? 'video-3d' : 'video-2d', active: view3d, onPress: () => { updateSettings({ ...settings, view3d: !view3d }); setFollow(true); } },
