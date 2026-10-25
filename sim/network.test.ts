@@ -154,3 +154,24 @@ test('фоновый запрос не «портит» сервер для ма
   assert.equal(isHostBad(`${s.url}/x`), true);
   s.close();
 });
+
+test('fuel: displayStatus граница 3ч и 12ч', async () => {
+  const { displayStatus } = await import('../src/fuelStatus.ts');
+  const now = 1_000_000_000_000;
+  const s1 = displayStatus({ status: 'yes', t: now - 3600_000 }, now);
+  assert.equal(s1.status, 'yes');
+  assert.equal(s1.color, '#2f9e44');
+
+  const s2 = displayStatus({ status: 'yes', t: now - 5 * 3600_000 }, now);
+  assert.equal(s2.status, 'yes');
+  assert.equal(s2.color, '#f59f00');
+
+  const s3 = displayStatus({ status: 'no', t: now - 2 * 3600_000 }, now);
+  assert.equal(s3.status, 'no');
+  assert.equal(s3.color, '#e03131');
+
+  const s4 = displayStatus({ status: 'no', t: now - 13 * 3600_000 }, now);
+  assert.equal(s4.status, 'unknown');
+  assert.equal(s4.color, '#868e96');
+});
+

@@ -13,7 +13,7 @@ import { clearLearned, clearPlan, importFile, loadAll, loadSettings, savePlan, s
 import { downloadCorridor } from './src/offlineRouter';
 import { deleteTrip, finalizeTripPart, getTripRoute, listTrips, saveTrip, saveTripGraph, saveTripRoute, subscribeTrips, updateTrip, type BBox, type Trip } from './src/trips';
 import { addRecent, clearRecent, loadRecent, removeRecent, type RecentPlace } from './src/recent';
-import { findFuel, loadReports, matchesFuel, setReport, statusOf, type FuelKind, type FuelReports, type FuelStation } from './src/fuel';
+import { findFuel, loadReports, matchesFuel, displayStatus, setReport, statusOf, type FuelKind, type FuelReports, type FuelStation } from './src/fuel';
 import { FuelSheet } from './src/ui/FuelSheet';
 import { PlaceCard, StopsPill } from './src/ui/PlaceCard';
 import { haversine } from './src/core/geo';
@@ -172,15 +172,16 @@ export default function App() {
     setFuelOn(false);
     pickDest({ name: st.name, detail: 'АЗС', lat: st.lat, lon: st.lon });
   }
-  function markFuel(st: FuelStation, status: 'yes' | 'no') {
+  function markFuel(st: FuelStation, status: 'yes' | 'low' | 'no') {
     setReport(st.id, status).then(setFuelReports).catch((e) => dlogError('отметка заправки', e));
-    setToast(status === 'yes' ? 'Отметили: топливо есть (только на этом телефоне)' : 'Отметили: топлива нет (только на этом телефоне)');
+    const label = status === 'yes' ? 'Есть топливо' : status === 'low' ? 'Мало / очередь' : 'Нет топлива';
+    setToast(`Отметка «${label}» сохранена (только на этом телефоне)`);
   }
   const fuelGeo = useMemo<GeoJSON.FeatureCollection>(() => ({
     type: 'FeatureCollection',
     features: !fuelOn ? [] : fuelList.filter((st) => matchesFuel(st, fuelFilter)).map((st) => {
-      const v = statusOf(fuelReports, st.id);
-      return { type: 'Feature', properties: { name: st.name, c: v === 'no' ? '#e03131' : '#2f9e44' }, geometry: { type: 'Point', coordinates: [st.lon, st.lat] } } as GeoJSON.Feature;
+      const ds = displayStatus(fuelReports[st.id]);
+      return { type: 'Feature', properties: { name: st.name, c: ds.color }, geometry: { type: 'Point', coordinates: [st.lon, st.lat] } } as GeoJSON.Feature;
     }),
   }), [fuelOn, fuelList, fuelFilter, fuelReports]);
   const routePts = screen === 'preview' ? (typeof plans[mode] === 'object' ? (plans[mode] as PlannedRoute).points : null) : screen === 'nav' ? plan?.points ?? null : null;
@@ -188,7 +189,14 @@ export default function App() {
     setPois([]);
     if (!routePts || routePts.length < 2) return;
     const ctrl = new AbortController();
-    fetchRoutePois(routePts, ctrl.signal).then(setPois).catch(() => {});
+    fetchRoutePois(routePts, ctrl.signal)
+      .then(setPois)
+      .catch((e: any) => {
+        if (e?.name !== 'AbortError') {
+          dlogError('poi: заправки вдоль маршрута недоступны', e);
+          setToast(`POI: заправки вдоль маршрута недоступны (${e?.message ?? e})`);
+        }
+      });
     return () => ctrl.abort();
   }, [routePts]);
 

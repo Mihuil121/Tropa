@@ -2,26 +2,22 @@
 
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { fmtDistance } from '../online';
-import { FUEL_LABEL, matchesFuel, statusOf, type FuelKind, type FuelReports, type FuelStation, type FuelStatus } from '../fuel';
+import { FUEL_LABEL, matchesFuel, displayStatus, type FuelKind, type FuelReports, type FuelStation } from '../fuel';
 import { Icon } from './Icon';
 import { C, ui, themed, useWide, sz } from './theme';
 
 const KINDS: FuelKind[] = ['92', '95', '98', '100', 'diesel', 'lpg'];
 
-function statusView(st: FuelStatus): { text: string; color: string } {
-  if (st === 'no') return { text: 'Нет топлива', color: C.red };
-  return { text: 'Есть топливо', color: C.green };
-}
-
 export function FuelSheet({ stations, reports, filter, onFilter, busy, note, onRefresh, onClose, onRoute, onAddStop, onMark }: {
   stations: FuelStation[]; reports: FuelReports; filter: FuelKind | null; onFilter: (k: FuelKind | null) => void;
   busy: boolean; note: string; onRefresh: () => void; onClose: () => void;
   onRoute: (st: FuelStation) => void; onAddStop?: (st: FuelStation) => void;
-  onMark: (st: FuelStation, status: 'yes' | 'no') => void;
+  onMark: (st: FuelStation, status: 'yes' | 'low' | 'no') => void;
 }) {
   const { wide, height } = useWide();
   const list = stations.filter((st) => matchesFuel(st, filter));
   const options: (FuelKind | null)[] = [null, ...KINDS];
+  const hasError = !!note && /нет связи|ошибка|не найдено|пробуйте/i.test(note);
   return (
     <View style={[ui.sheet, wide && ui.sheetWide]}>
       <View style={ui.grabber} />
@@ -37,11 +33,18 @@ export function FuelSheet({ stations, reports, filter, onFilter, busy, note, onR
           </Pressable>
         ))}
       </ScrollView>
-      {!!note && <Text style={[ui.sub, { marginTop: 4 }]}>{note}</Text>}
+      {!!note && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+          <Text style={[ui.sub, { flex: 1, color: hasError ? C.redText : C.sub }]}>{note}</Text>
+          {hasError && (
+            <Pressable onPress={onRefresh} style={s.retryBtn}><Text style={s.retryText}>Повторить</Text></Pressable>
+          )}
+        </View>
+      )}
       <ScrollView style={{ maxHeight: Math.round(height * 0.36) }} showsVerticalScrollIndicator={false}>
         {list.length === 0 && !busy && <Text style={[ui.sub, s.empty]}>Подходящих заправок не нашлось.</Text>}
         {list.map((st) => {
-          const v = statusView(statusOf(reports, st.id));
+          const ds = displayStatus(reports[st.id]);
           return (
             <View key={st.id} style={s.item}>
               <View style={s.top}>
@@ -49,8 +52,8 @@ export function FuelSheet({ stations, reports, filter, onFilter, busy, note, onR
                 <View style={{ flex: 1 }}>
                   <Text style={s.name} numberOfLines={1}>{st.name}</Text>
                   <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
-                    <View style={[s.dot, { backgroundColor: v.color }]} />
-                    <Text style={[s.detail, { color: v.color }]}>{v.text}</Text>
+                    <View style={[s.dot, { backgroundColor: ds.color }]} />
+                    <Text style={[s.detail, { color: ds.color }]}>{ds.text}</Text>
                     <Text style={s.detail}> · ≈ {fmtDistance(st.distM)}</Text>
                   </View>
                   <Text style={s.detail} numberOfLines={1}>
@@ -69,14 +72,15 @@ export function FuelSheet({ stations, reports, filter, onFilter, busy, note, onR
                     <Text style={[s.btnText, { color: C.blue }]}>Заехать</Text>
                   </Pressable>
                 )}
-                <Pressable style={s.btn} onPress={() => onMark(st, 'yes')}><Text style={[s.btnText, { color: C.green }]}>Есть бензин</Text></Pressable>
-                <Pressable style={s.btn} onPress={() => onMark(st, 'no')}><Text style={[s.btnText, { color: C.red }]}>Нет бензина</Text></Pressable>
+                <Pressable style={s.btn} onPress={() => onMark(st, 'yes')}><Text style={[s.btnText, { color: C.green }]}>Есть</Text></Pressable>
+                <Pressable style={s.btn} onPress={() => onMark(st, 'low')}><Text style={[s.btnText, { color: '#f59f00' }]}>Мало</Text></Pressable>
+                <Pressable style={s.btn} onPress={() => onMark(st, 'no')}><Text style={[s.btnText, { color: C.red }]}>Нет</Text></Pressable>
               </View>
             </View>
           );
         })}
       </ScrollView>
-      <Text style={s.foot}>Адреса — из OpenStreetMap, о наличии топлива они не знают. Отметки «есть / нет» хранятся только на вашем телефоне и действуют 12 часов.</Text>
+      <Text style={s.foot}>Статусы — личные отметки на этом телефоне и действуют 12 часов. Данные адресов — из OpenStreetMap.</Text>
     </View>
   );
 }
@@ -94,8 +98,10 @@ const s = themed(() => ({
   name: { fontSize: sz(16), fontWeight: '700', color: C.text },
   detail: { fontSize: sz(13), color: C.sub },
   dot: { width: sz(8), height: sz(8), borderRadius: sz(4), marginRight: sz(6) },
-  btns: { flexDirection: 'row', gap: sz(8), marginTop: sz(8) },
-  btn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: C.chip, borderRadius: sz(12), paddingHorizontal: sz(12), paddingVertical: sz(8) },
-  btnText: { fontSize: sz(13), fontWeight: '700' },
+  btns: { flexDirection: 'row', gap: sz(6), marginTop: sz(8), flexWrap: 'wrap' },
+  btn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: C.chip, borderRadius: sz(12), paddingHorizontal: sz(10), paddingVertical: sz(6) },
+  btnText: { fontSize: sz(12), fontWeight: '700' },
   foot: { fontSize: sz(11), color: C.hint, marginTop: sz(8) },
+  retryBtn: { backgroundColor: C.blueSoft, borderRadius: sz(10), paddingHorizontal: sz(10), paddingVertical: sz(4), marginLeft: sz(6) },
+  retryText: { color: C.blue, fontWeight: '700', fontSize: sz(12) },
 }));
