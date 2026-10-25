@@ -12,6 +12,7 @@
 import type { LatLon } from './core/geo.ts';
 import type { TravelMode, PlannedRoute, Maneuver } from './online.ts';
 import { fetchText, firstOk } from './net.ts';
+import { dlogError } from './debugLog.ts';
 
 export type Node = { lat: number; lon: number };
 
@@ -278,6 +279,11 @@ export function corridorBoxes(pts: LatLon[], marginKm = 1.5, stepKm = 8): BBox[]
   return out;
 }
 
+export function getRegionFallbackUrl(): string | null {
+  // TODO: интеграция с Geofabrik OSM PBF / региональным дампом
+  return null;
+}
+
 /**
  * Пока есть интернет: скачать дороги и тропы полосой вдоль маршрута.
  * Куски по 12 прямоугольников за запрос — чтобы ответ не был огромным для слабого телефона.
@@ -290,18 +296,22 @@ export async function downloadCorridor(pts: LatLon[], opts: { signal?: AbortSign
   for (let b = 0; b < batches.length; b++) {
     const parts = batches[b].map(([s, w, n, e]) => `way["highway"]["access"!~"^(private|no)$"](${s.toFixed(5)},${w.toFixed(5)},${n.toFixed(5)},${e.toFixed(5)});`).join('');
     const q = `[out:json][timeout:90];(${parts});out body;>;out skel qt;`;
-    const j = await firstOk(OVERPASS.map((url) => ({
-      label: 'overpass', host: url,
-      run: async (sig: AbortSignal) => {
-        const r = await fetchText(url, {
-          method: 'POST', body: `data=${encodeURIComponent(q)}`,
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal: sig, timeoutMs: 100_000,
-        });
-        if (!r.ok) throw new Error(`overpass ${r.status}`);
-        return JSON.parse(r.text);
-      },
-    })), { signal: opts.signal, staggerMs: 15_000, budgetMs: 150_000 });
-    responses.push(j);
+    try {
+      const j = await firstOk(OVERPASS.map((url) => ({
+        label: 'overpass', host: url,
+        run: async (sig: AbortSignal) => {
+          const r = await fetchText(url, {
+            method: 'POST', body: `data=${encodeURIComponent(q)}`,
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal: sig, timeoutMs: 100_000,
+          });
+          if (!r.ok) throw new Error(`overpass ${r.status}`);
+          return JSON.parse(r.text);
+        },
+      })), { signal: opts.signal, staggerMs: 15_000, budgetMs: 150_000 });
+      if (j) responses.push(j);
+    } catch (e: any) {
+      dlogError(`overpass батч ${b + 1}/${batches.length} пропущен из-за ошибки`, e);
+    }
     opts.onProgress?.(((b + 1) / batches.length) * 100);
   }
   return buildGraph(responses);

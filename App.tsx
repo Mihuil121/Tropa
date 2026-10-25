@@ -14,7 +14,6 @@ import { downloadCorridor } from './src/offlineRouter';
 import { deleteTrip, finalizeTripPart, getTripRoute, listTrips, saveTrip, saveTripGraph, saveTripRoute, subscribeTrips, updateTrip, type BBox, type Trip } from './src/trips';
 import { addRecent, clearRecent, loadRecent, removeRecent, type RecentPlace } from './src/recent';
 import { findFuel, loadReports, matchesFuel, setReport, statusOf, type FuelKind, type FuelReports, type FuelStation } from './src/fuel';
-import { FuelChips } from './src/ui/FuelChips';
 import { FuelSheet } from './src/ui/FuelSheet';
 import { PlaceCard, StopsPill } from './src/ui/PlaceCard';
 import { haversine } from './src/core/geo';
@@ -1210,7 +1209,7 @@ export default function App() {
       )}
 
       {/* ---------- Кнопки справа ---------- */}
-      {screen !== 'search' && screen !== 'preview' && sheet === 'none' && !fuelOn && (
+      {screen !== 'search' && (
         <View style={[s.side, { bottom: bottom + sz(compact ? 100 : 118) }, screen === 'nav' && { bottom: sz(230) }]}>
           <MapButtonGroup items={[
             ...(Math.abs(mapBearing) > 5 ? [{ icon: 'compass-outline' as IconName, active: true, onPress: () => { setMapBearing(0); setFollow(true); setToast('Карта ориентирована на север'); } }] : []),
@@ -1273,7 +1272,7 @@ export default function App() {
           onClose={() => { setScreen('map'); setDest(null); setPlans({}); setFollow(true); }} /></Appear>
       )}
 
-      {fuelOn && (screen === 'map' || screen === 'nav') && sheet === 'none' && (
+      {fuelOn && (screen === 'map' || screen === 'nav' || screen === 'preview') && (
         <Appear key="fuel"><FuelSheet stations={fuelList} reports={fuelReports} filter={fuelFilter} onFilter={setFuelFilter} busy={fuelBusy} note={fuelNote}
           onRefresh={loadFuel} onClose={toggleFuel} onRoute={routeToFuel}
           onAddStop={screen === 'map' && !dest ? undefined : (st) => { setFuelOn(false); addStop({ name: st.name, lat: st.lat, lon: st.lon }); }}
