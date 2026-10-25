@@ -7,14 +7,17 @@ import { Button } from './components';
 import { WeatherRoute } from './WeatherUI';
 import type { WeatherAt } from '../weather';
 import { Icon, type IconName } from './Icon';
+import { AnimatedIcon } from './AnimatedIcon';
 import { C, compact, shadow, ui, themed, useWide, useInsets, PANEL_W, sz } from './theme';
+
+import type { Trip } from '../trips';
 
 export type Plans = Partial<Record<TravelMode, PlannedRoute | string>>;
 
-export function RoutePreview({ dest, plans, loading, mode, onMode, onGo, onClose, trafficNote, weather, extra, onPrepareOffline, onRetry, hasGisKey }: {
+export function RoutePreview({ dest, plans, loading, mode, onMode, onGo, onClose, trafficNote, weather, extra, onPrepareOffline, onRetry, hasGisKey, trip, onRemoveStop }: {
   dest: Place; plans: Plans; loading: boolean; mode: TravelMode; trafficNote?: string; weather?: WeatherAt[] | null; extra?: ReactNode;
   onMode: (m: TravelMode) => void; onGo: () => void; onClose: () => void; onPrepareOffline?: (r: PlannedRoute) => void;
-  onRetry?: () => void; hasGisKey?: boolean;
+  onRetry?: () => void; hasGisKey?: boolean; trip?: Trip | null; onRemoveStop?: (idx: number) => void;
 }) {
   const { wide, height } = useWide();
   const { top } = useInsets();
@@ -98,6 +101,17 @@ export function RoutePreview({ dest, plans, loading, mode, onMode, onGo, onClose
               {ok.seaCrossing ? <Fact icon="water" text="Есть водный участок (паром / прямая через море)" /> : null}
               {ok.onDevice ? <Fact icon="cellphone-check" text="Построено в телефоне — без интернета" /> : null}
               {ok.offline ? <Fact icon="map-marker" text={ok.offlineGraph ? 'Построено офлайн — по сохранённым дорогам' : 'Построено офлайн — по прямой'} /> : null}
+              {ok.stops?.map((st, i) => (
+                <View key={i} style={s.fact}>
+                  <Icon name="map-marker-check" size={16} color={C.blue} style={{ marginRight: 5 }} />
+                  <Text style={s.factText}>Остановка: {st.name}</Text>
+                  {onRemoveStop && (
+                    <Pressable onPress={() => onRemoveStop(i)} hitSlop={8} style={{ marginLeft: 6 }}>
+                      <Icon name="close" size={14} color={C.sub} />
+                    </Pressable>
+                  )}
+                </View>
+              ))}
             </View>
             {ok.offline && !ok.offlineGraph && (
               <View style={s.seaWarn}>
@@ -115,24 +129,40 @@ export function RoutePreview({ dest, plans, loading, mode, onMode, onGo, onClose
             {mode === 'car' && extra ? <View style={{ marginTop: 10 }}>{extra}</View> : null}
             {onPrepareOffline && ok ? (
               <Pressable
-                onPress={async () => {
-                  if (savingOffline || savedOffline) return;
-                  setSavingOffline(true);
-                  await new Promise((r) => setTimeout(r, 500));
+                onPress={() => {
+                  if (trip?.status === 'downloading' || trip?.status === 'ready') return;
                   onPrepareOffline(ok);
-                  setSavingOffline(false);
-                  setSavedOffline(true);
                 }}
-                style={({ pressed }) => [s.offlinePlanBtn, savedOffline && { backgroundColor: C.blueSoft, borderColor: C.blue }, pressed && { opacity: 0.8 }]}
+                style={({ pressed }) => [
+                  s.offlinePlanBtn,
+                  trip?.status === 'ready' && { backgroundColor: C.blueSoft, borderColor: C.blue },
+                  trip?.status === 'error' && { borderColor: C.red },
+                  pressed && { opacity: 0.8 },
+                ]}
               >
-                {savingOffline ? (
-                  <ActivityIndicator size="small" color={C.blue} style={{ marginRight: 8 }} />
+                {trip?.status === 'downloading' || trip?.status === 'queued' ? (
+                  <>
+                    <AnimatedIcon name="download" size={24} color={C.blue} loop style={{ marginRight: 8 }} />
+                    <Text style={s.offlinePlanText}>Скачивается {Math.floor(trip.totalPct)}%…</Text>
+                  </>
+                ) : trip?.status === 'ready' ? (
+                  <>
+                    <AnimatedIcon name="checkmark" size={24} color={C.blue} style={{ marginRight: 8 }} />
+                    <Text style={s.offlinePlanText}>Скачано ✓ ({trip.mb ? `${trip.mb} МБ` : 'офлайн'})</Text>
+                  </>
+                ) : trip?.status === 'error' ? (
+                  <>
+                    <Icon name="alert-circle-outline" size={20} color={C.red} style={{ marginRight: 8 }} />
+                    <Text style={[s.offlinePlanText, { color: C.red }]}>
+                      {trip.error || 'Ошибка загрузки'} — Повторить
+                    </Text>
+                  </>
                 ) : (
-                  <Icon name={savedOffline ? "check-circle" : "download"} size={20} color={C.blue} style={{ marginRight: 8 }} />
+                  <>
+                    <Icon name="download" size={20} color={C.blue} style={{ marginRight: 8 }} />
+                    <Text style={s.offlinePlanText}>Запланировать поездку без интернета (скачать карту и вышки)</Text>
+                  </>
                 )}
-                <Text style={s.offlinePlanText}>
-                  {savedOffline ? 'Маршрут сохранён для офлайна ✓' : 'Запланировать поездку без интернета (скачать карту и вышки)'}
-                </Text>
               </Pressable>
             ) : null}
           </View>

@@ -51,6 +51,13 @@
           "isAndroidForegroundServiceEnabled": true
         }
       ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Нужен микрофон, чтобы вы могли назвать место голосом.",
+          "speechRecognitionPermission": "Нужно распознавание речи для голосового поиска места."
+        }
+      ],
       "./plugins/withGlyphs.js",
       "./plugins/withValhalla.js"
     ]

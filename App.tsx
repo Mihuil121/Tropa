@@ -3,28 +3,36 @@
 // Вся логика определения места — в src/core (ядро) и src/useNavigation (датчики).
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View, useColorScheme, useWindowDimensions } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, View, useColorScheme, useWindowDimensions } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useKeepAwake } from 'expo-keep-awake';
 import { Camera, GeoJSONSource, Images, Layer, Map, RasterSource } from '@maplibre/maplibre-react-native';
 
 import { useNavigation } from './src/useNavigation';
-import { clearLearned, clearPlan, importFile, loadAll, loadSettings, saveOfflineGraph, savePlan, saveSettings, type Kind, type Loaded, type Settings } from './src/data';
+import { clearLearned, clearPlan, importFile, loadAll, loadSettings, savePlan, saveSettings, type Kind, type Loaded, type Settings } from './src/data';
 import { downloadCorridor } from './src/offlineRouter';
+import { deleteTrip, finalizeTripPart, getTripRoute, listTrips, saveTrip, saveTripGraph, saveTripRoute, subscribeTrips, updateTrip, type BBox, type Trip } from './src/trips';
+import { addRecent, clearRecent, loadRecent, removeRecent, type RecentPlace } from './src/recent';
+import { findFuel, loadReports, matchesFuel, setReport, statusOf, type FuelKind, type FuelReports, type FuelStation } from './src/fuel';
+import { FuelChips } from './src/ui/FuelChips';
+import { FuelSheet } from './src/ui/FuelSheet';
+import { PlaceCard, StopsPill } from './src/ui/PlaceCard';
+import { haversine } from './src/core/geo';
 import { listAdapters } from './src/obdLink';
 import { buildStyle, fileStyle, liteStyle, loadOnlineStyle, skinStyle } from './src/mapStyle';
 import { Appear } from './src/ui/motion';
 import { MeLayer } from './src/ui/MeLayer';
 import { isLite } from './src/device';
+import { setLiteFlag } from './src/ui/liteFlag';
 import { WeatherChip } from './src/ui/WeatherUI';
-import { MODES, fetchSpeedLimits, fmtDistance, fmtDuration, limitAt, limitMarks, planRoute, pointAhead, routes2gis, setOnlineKeys, speedLimitHere, type Place, type PlannedRoute, type TrafficRoute, type TravelMode } from './src/online';
+import { MODES, fetchSpeedLimits, fmtDistance, fmtDuration, limitAt, limitMarks, planRoute, planRouteVia, pointAhead, routes2gis, setOnlineKeys, speedLimitHere, type Place, type PlannedRoute, type Stop, type TrafficRoute, type TravelMode } from './src/online';
 import { dlogError, dlogEvery } from './src/debugLog';
 import { SearchScreen } from './src/ui/SearchScreen';
 import { RoutePreview, type Plans } from './src/ui/RoutePreview';
 import { ManeuverCard, NavBottom, SpeedOverlay } from './src/ui/NavPanels';
 import { SettingsSheet } from './src/ui/SettingsSheet';
 import { MapDownloads } from './src/ui/MapDownloads';
-import { enqueue, listAreas, planCorridor, queueState, setAfterMap, subscribeQueue } from './src/offlineMaps';
+import { deleteTripMaps, enqueue, listAreas, planCorridor, queueState, setAfterMap, subscribeQueue } from './src/offlineMaps';
 import { weatherAlong, weatherNow, type WeatherAt, type WeatherNow } from './src/weather';
 import { turnArrows } from './src/turnArrows';
 import { pickDetours, spliceDetour, type DetourOffer } from './src/detour';
@@ -44,7 +52,7 @@ import { dlog } from './src/debugLog';
 import { voice } from './src/voice';
 import { fetchRoutePois, type PoiItem } from './src/poi';
 import { Chip, MapButton, MapButtonGroup } from './src/ui/components';
-import { Icon } from './src/ui/Icon';
+import { Icon, type IconName } from './src/ui/Icon';
 import { C, GPS_LABEL, PANEL_W, applyScreen, applyTheme, compact, shadow, themed, ui, useInsets, useWide, sz } from './src/ui/theme';
 
 type Screen = 'map' | 'search' | 'preview' | 'nav';
@@ -101,9 +109,12 @@ export default function App() {
   const [settings, setSettings] = useState<Settings>({});
   const dark = settings.theme === 'dark' || ((settings.theme ?? 'auto') === 'auto' && scheme === 'dark');
   const lite = isLite(settings.lite); // слабый телефон: без 3D, анимаций и тяжёлых слоёв
+  setLiteFlag(lite);
   applyTheme(dark); // до отрисовки детей — все цвета уже нужной темы
   const [screen, setScreen] = useState<Screen>('map');
   const [dest, setDest] = useState<Place | null>(null);
+  const [stops, setStops] = useState<Stop[]>([]);
+  const [cand, setCand] = useState<(Place & { sub?: string }) | null>(null);
   const [plans, setPlans] = useState<Plans>({});
   const [planning, setPlanning] = useState(false);
   const [planNonce, setPlanNonce] = useState(0);
@@ -123,6 +134,55 @@ export default function App() {
   const [onlineStyle, setOnlineStyle] = useState<Awaited<ReturnType<typeof loadOnlineStyle>> | null>(null);
   const [hereLimit, setHereLimit] = useState<{ kmh: number | null; t: number } | null>(null);
   const [pois, setPois] = useState<PoiItem[]>([]);
+
+  // ---------- Заправки рядом (кнопка «Бензин») ----------
+  const [fuelOn, setFuelOn] = useState(false);
+  const [fuelBusy, setFuelBusy] = useState(false);
+  const [fuelList, setFuelList] = useState<FuelStation[]>([]);
+  const [fuelNote, setFuelNote] = useState('');
+  const [fuelFilter, setFuelFilter] = useState<FuelKind | null>(null);
+  const [fuelReports, setFuelReports] = useState<FuelReports>({});
+  const fuelCtrl = useRef<AbortController | null>(null);
+  useEffect(() => { loadReports().then(setFuelReports); }, []);
+
+  async function loadFuel() {
+    if (!nav?.ready) { setToast('Место ещё не определено — заправки ищем рядом с вами'); return; }
+    fuelCtrl.current?.abort();
+    const c = new AbortController();
+    fuelCtrl.current = c;
+    setFuelBusy(true);
+    try {
+      const r = await findFuel({ lat: nav.lat, lon: nav.lon }, c.signal);
+      setFuelList(r.stations);
+      setFuelNote(r.error ? r.error
+        : r.fromCache ? `Нет сети: показаны данные от ${new Date(r.cachedAt ?? Date.now()).toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' })}`
+        : r.stations.length ? '' : 'Заправок рядом не нашлось');
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') dlogError('заправки', e);
+    } finally {
+      if (fuelCtrl.current === c) setFuelBusy(false);
+    }
+  }
+  function toggleFuel() {
+    if (fuelOn) { fuelCtrl.current?.abort(); setFuelBusy(false); setFuelOn(false); return; }
+    setFuelOn(true);
+    loadFuel();
+  }
+  function routeToFuel(st: FuelStation) {
+    setFuelOn(false);
+    pickDest({ name: st.name, detail: 'АЗС', lat: st.lat, lon: st.lon });
+  }
+  function markFuel(st: FuelStation, status: 'yes' | 'no') {
+    setReport(st.id, status).then(setFuelReports).catch((e) => dlogError('отметка заправки', e));
+    setToast(status === 'yes' ? 'Отметили: топливо есть (только на этом телефоне)' : 'Отметили: топлива нет (только на этом телефоне)');
+  }
+  const fuelGeo = useMemo<GeoJSON.FeatureCollection>(() => ({
+    type: 'FeatureCollection',
+    features: !fuelOn ? [] : fuelList.filter((st) => matchesFuel(st, fuelFilter)).map((st) => {
+      const v = statusOf(fuelReports, st.id);
+      return { type: 'Feature', properties: { name: st.name, c: v === 'yes' ? '#2f9e44' : v === 'no' ? '#e03131' : '#868e96' }, geometry: { type: 'Point', coordinates: [st.lon, st.lat] } } as GeoJSON.Feature;
+    }),
+  }), [fuelOn, fuelList, fuelFilter, fuelReports]);
   const routePts = screen === 'preview' ? (typeof plans[mode] === 'object' ? (plans[mode] as PlannedRoute).points : null) : screen === 'nav' ? plan?.points ?? null : null;
   useEffect(() => {
     setPois([]);
@@ -134,12 +194,24 @@ export default function App() {
 
   const poisGeo = useMemo<GeoJSON.FeatureCollection>(() => ({
     type: 'FeatureCollection',
-    features: pois.map((p) => ({
+    features: pois.filter((p) => !(fuelOn && p.category === 'fuel')).map((p) => ({
       type: 'Feature',
       properties: { name: p.name, c: p.category === 'fuel' ? '#f59f00' : p.category === 'food' ? '#7048e8' : '#228be6' },
       geometry: { type: 'Point', coordinates: [p.lon, p.lat] },
     })),
-  }), [pois]);
+  }), [pois, fuelOn]);
+
+  const stopsGeo = useMemo<GeoJSON.FeatureCollection>(() => {
+    const list = screen === 'preview' ? stops : plan?.stops ?? [];
+    return {
+      type: 'FeatureCollection',
+      features: list.map((st, i) => ({
+        type: 'Feature',
+        properties: { n: String(i + 1), name: st.name },
+        geometry: { type: 'Point', coordinates: [st.lon, st.lat] },
+      })),
+    };
+  }, [screen, stops, plan?.stops]);
   useEffect(() => { loadOnlineStyle().then((st) => { setOnlineStyle(st); dlog('стиль карты:', typeof st === 'string' ? 'по ссылке (без русификации)' : 'русские подписи'); }); }, []);
   useEffect(() => { setOnlineKeys({ gisKey: settings.gisKey }); }, [settings.gisKey]);
   // Встроенный Valhalla и офлайн-поиск по скачанным областям
@@ -153,6 +225,16 @@ export default function App() {
     return regionMapFor(p);
   }, [mapKey, plan, regionsVer]);
   const fileMap = data?.mapUri ?? regionMap;
+
+  const [activeTripId, setActiveTripId] = useState<string | null>(null);
+  const [trips, setTrips] = useState<Trip[]>([]);
+  useEffect(() => {
+    listTrips().then(setTrips);
+    return subscribeTrips(() => { listTrips().then(setTrips); });
+  }, []);
+
+  const [recent, setRecent] = useState<RecentPlace[]>([]);
+  useEffect(() => { loadRecent().then(setRecent); }, []);
 
   // ---------- Загрузка сохранённого ----------
   async function reloadData(resume = false) {
@@ -180,7 +262,7 @@ export default function App() {
     // Все три вида транспорта — одновременно; каждый показывается, как только готов.
     // (Повторную попытку убрали: внутри planRoute и так опрашиваются все серверы внахлёст.)
     const from = { lat: nav.lat, lon: nav.lon };
-    Promise.allSettled(MODES.map((m) => planRoute(from, dest, m.id, ctrl.signal)
+    Promise.allSettled(MODES.map((m) => planRouteVia(from, stops, dest, m.id, ctrl.signal)
       .then((r) => { if (!ctrl.signal.aborted) setPlans((ps) => ({ ...ps, [m.id]: r })); return r; })
       .catch((e: any) => { if (!ctrl.signal.aborted && e?.name !== 'AbortError') setPlans((ps) => ({ ...ps, [m.id]: String(e?.message ?? e) })); throw e; })))
       .then((res) => {
@@ -190,7 +272,7 @@ export default function App() {
       .finally(() => { if (!ctrl.signal.aborted) setPlanning(false); });
     // Отмена (ушли с экрана, пропало место) — снимаем «строим…», иначе крутилось бы вечно
     return () => { ctrl.abort(); setPlanning(false); };
-  }, [screen, dest, nav?.ready, planNonce]);
+  }, [screen, dest, nav?.ready, planNonce, stops]);
 
   // ---------- Знаки скорости вдоль авто-маршрута (сохраняются вместе с маршрутом) ----------
   const carPlan = typeof plans.car === 'object' ? plans.car : null;
@@ -315,18 +397,34 @@ export default function App() {
   // Вместе с картой скачиваем вышки этой области — и сразу подключаем их к ядру
   useEffect(() => {
     setAfterMap(async (plan, progress) => {
-      const { records, count, fields } = await downloadCells(plan.cellBoxes ?? [], (pct, found) => progress(pct, found ? `найдено вышек: ${found}` : undefined));
-      await saveAreaCells(plan.name, count);
-      setAreaCells(await loadAreaCells());
-      if (!count) {
-        dlog(`вышки: для «${plan.name}» ничего не нашлось (поля в файле: ${fields.join(', ') || 'нет данных'})`);
-        progress(100, 'вышек в этой области в базе нет');
-        return;
+      try {
+        const { records, count, fields } = await downloadCells(plan.cellBoxes ?? [], (pct, found) => progress(pct, found ? `найдено вышек: ${found}` : undefined));
+        await saveAreaCells(plan.name, count);
+        setAreaCells(await loadAreaCells());
+        if (!count) {
+          dlog(`вышки: для «${plan.name}» ничего не нашлось (поля в файле: ${fields.join(', ') || 'нет данных'})`);
+          progress(100, 'вышек в этой области в базе нет');
+        } else {
+          const total = await mergeCells(records);
+          await reloadData();
+          progress(100, `вышек: ${count} (всего в базе ${total})`);
+          if (!plan.name.startsWith('Впереди')) setToast(`«${plan.name}»: скачано ${count} вышек`);
+        }
+        if (plan.tripId) {
+          const areas = await listAreas();
+          const matching = areas.find((a) => a.tripId === plan.tripId);
+          const mb = Math.round((matching?.bytes ?? 0) / 1e6);
+          if (!matching || matching.percent < 99.9) {
+            await finalizeTripPart(plan.tripId, 'queue', 'Карта скачалась не полностью (сервер карт не отвечает?). Нажмите «Повторить»', mb);
+          } else {
+            await updateTrip(plan.tripId, { cellsCount: count });
+            await finalizeTripPart(plan.tripId, 'queue', undefined, mb);
+          }
+        }
+      } catch (e: any) {
+        if (plan.tripId) await finalizeTripPart(plan.tripId, 'queue', `Вышки: ${e?.message ?? e}`);
+        throw e;
       }
-      const total = await mergeCells(records);
-      await reloadData();
-      progress(100, `вышек: ${count} (всего в базе ${total})`);
-      if (!plan.name.startsWith('Впереди')) setToast(`«${plan.name}»: скачано ${count} вышек`);
     });
   }, []);
 
@@ -355,9 +453,16 @@ export default function App() {
     });
     let prev: string | null = null;
     const un = subscribeQueue(() => {
-      const cur = queueState().current?.name ?? null;
-      if (prev && prev !== cur && !prev.startsWith('Впереди')) setToast(`Карта «${prev}» скачана`);
-      prev = cur;
+      const qs = queueState();
+      const cur = qs.current;
+      if (cur?.tripId) {
+        const pct = Math.floor(cur.pct);
+        if (cur.phase === 'вышки') updateTrip(cur.tripId, { progress: { cells: pct } });
+        else updateTrip(cur.tripId, { progress: { map: pct } });
+      }
+      const curName = cur?.name ?? null;
+      if (prev && prev !== curName && !prev.startsWith('Впереди')) setToast(`Карта «${prev}» скачана`);
+      prev = curName;
       upd();
     });
     upd();
@@ -581,12 +686,105 @@ export default function App() {
   function pickDest(p: Place) {
     resetHostHealth(); // новое действие пользователя — заново пробуем все серверы
     setDest(p);
+    setStops([]);
+    setCand(null);
     setPlans({});
     setScreen('preview');
     setFollow(false);
+    setActiveTripId(null);
+    setFuelOn(false);
+    addRecent(p).then(setRecent).catch((e) => dlogError('недавние', e));
+  }
+
+  async function replanNav(newStops: Stop[]) {
+    if (!plan || !nav?.ready) return;
+    const from = { lat: nav.lat, lon: nav.lon };
+    const destPlace: Place = plan.dest ?? { lat: plan.points[plan.points.length - 1].lat, lon: plan.points[plan.points.length - 1].lon, name: 'Финиш', detail: '' };
+    try {
+      const newPlan = await planRouteVia(from, newStops, destPlace, plan.mode);
+      const full: PlannedRoute = { ...newPlan, dest: destPlace };
+      setPlan(full);
+      engine.setRoute(full.points, full.maneuvers);
+      savePlan(full);
+      if (full.mode === 'car' && !full.offline) attachLimits(full);
+    } catch (e) {
+      dlogError('пересчёт с остановками', e);
+      setToast('Не удалось перестроить маршрут через остановку');
+    }
+  }
+
+  function addStop(st: Stop) {
+    setCand(null);
+    if (screen === 'preview') {
+      setStops((prev) => [...prev, st]);
+      setPlans({});
+      return;
+    }
+    if (screen === 'nav' && plan) {
+      const nextStops = [...(plan.stops ?? []), st];
+      replanNav(nextStops);
+      return;
+    }
+    pickDest({ name: st.name, detail: 'Остановка', lat: st.lat, lon: st.lon });
+  }
+
+  function removeStop(idx: number) {
+    if (screen === 'preview') {
+      setStops((prev) => prev.filter((_, i) => i !== idx));
+      setPlans({});
+      return;
+    }
+    if (screen === 'nav' && plan) {
+      const nextStops = (plan.stops ?? []).filter((_, i) => i !== idx);
+      replanNav(nextStops);
+    }
+  }
+
+  // Если подъехали к очередной остановке ближе 70 м — считаем пройденной и удаляем
+  useEffect(() => {
+    if (screen !== 'nav' || !plan?.stops?.length || !nav?.ready) return;
+    const first = plan.stops[0];
+    if (haversine({ lat: nav.lat, lon: nav.lon }, first) < 70) {
+      voice.speak(`Остановка ${first.name} пройдена`);
+      setToast(`Остановка «${first.name}» пройдена`);
+      removeStop(0);
+    }
+  }, [screen, plan?.stops, nav?.ready, nav?.lat, nav?.lon]);
+
+  /** Тап по скачанной поездке: готовая открывается сразу, с ошибкой — открывает превью, там кнопка «Повторить». */
+  async function openTrip(t: Trip) {
+    if (t.status === 'queued' || t.status === 'downloading') { setToast('Поездка ещё скачивается'); return; }
+    if (t.status === 'error') {
+      pickDest(t.dest);
+      setActiveTripId(t.id); // кнопка в превью покажет ошибку, повтор использует тот же id
+      return;
+    }
+    const route = await getTripRoute(t.id);
+    if (!route || route.points.length < 2) { setToast('У этой поездки нет сохранённого маршрута'); return; }
+    setPlan(route);
+    setMode(route.mode);
+    engine.setRoute(route.points, route.maneuvers);
+    engine.setTravelMode(route.mode);
+    savePlan(route).catch((e) => dlogError('сохранить маршрут', e));
+    setScreen('nav');
+    setFollow(true);
+    setToast(`Едем по сохранённому маршруту: ${t.name}`);
+  }
+
+  function removeTrip(t: Trip) {
+    if (t.status === 'queued' || t.status === 'downloading') { setToast('Дождитесь конца загрузки'); return; }
+    Alert.alert(`Удалить «${t.name}»?`, 'Карта, дороги и маршрут этой поездки будут удалены с телефона. Вышки останутся в общей базе.', [
+      { text: 'Отмена', style: 'cancel' },
+      { text: 'Удалить', style: 'destructive', onPress: () => {
+        deleteTrip(t.id, deleteTripMaps)
+          .then(() => { if (activeTripId === t.id) setActiveTripId(null); setToast('Поездка удалена'); })
+          .catch((e) => dlogError('удалить поездку', e));
+      } },
+    ]);
   }
 
   async function go() {
+    setFuelOn(false);
     const p = plans[mode];
     if (typeof p !== 'object') return;
     const full: PlannedRoute = { ...p, dest: dest ?? undefined };
@@ -617,37 +815,66 @@ export default function App() {
   async function prepareOffline(r: PlannedRoute) {
     let full: PlannedRoute = { ...r, dest: dest ?? undefined };
     setToast('Подготавливаем маршрут, вышки и карту для офлайна…');
-    await savePlan(full); // маршрут — сразу, остальное догружается
+    await savePlan(full);
     if (mode === 'car' && !full.limits) {
       try { full = { ...full, limits: await fetchSpeedLimits(full.points) }; await savePlan(full); } catch (e) { dlogError('знаки для офлайна', e); }
     }
     setPlan(full);
     const routeName = full.dest?.name || 'Запланированный маршрут';
-    const corridorPlan = planCorridor(routeName, full.points, false);
-    downloadCells(corridorPlan.cellBoxes ?? [], (pct, found) => {
-      dlog(`офлайн вышки: ${pct.toFixed(0)}%, найдено: ${found}`);
-    }).then(async ({ records, count }) => {
-      if (count) {
-        await saveAreaCells(routeName, count);
-        await mergeCells(records);
-        setAreaCells(await loadAreaCells());
-      }
-    }).catch((e) => dlogError('офлайн вышки', e));
 
-    enqueue(planCorridor(routeName, full.points, true));
+    const tripId = activeTripId || `trip_${full.createdAt || Date.now()}`;
+    setActiveTripId(tripId);
+    if (activeTripId) await deleteTripMaps(tripId); // повтор после ошибки: убрать недокачанные паки этой поездки
 
-    // Дороги полосой ±1,5 км вдоль маршрута — для перестройки без интернета (A*).
-    // Раньше качался прямоугольник вокруг всей дороги (+5 км): на дальней поездке — сотни МБ.
+    let minLon = 180, minLat = 90, maxLon = -180, maxLat = -90;
+    for (const p of full.points) {
+      minLon = Math.min(minLon, p.lon); minLat = Math.min(minLat, p.lat);
+      maxLon = Math.max(maxLon, p.lon); maxLat = Math.max(maxLat, p.lat);
+    }
+    const bbox: BBox = [minLon - 0.05, minLat - 0.05, maxLon + 0.05, maxLat + 0.05];
+    const destPlace: Place = full.dest ?? { name: routeName, detail: '', lat: full.points[full.points.length - 1].lat, lon: full.points[full.points.length - 1].lon };
+
+    const trip: Trip = {
+      id: tripId,
+      name: routeName,
+      dest: destPlace,
+      mode: full.mode || mode,
+      createdAt: full.createdAt || Date.now(),
+      status: 'downloading',
+      progress: { map: 0, cells: 0, graph: 0 },
+      totalPct: 0,
+      mb: 0,
+      cellsCount: 0,
+      bbox,
+      queueDone: false,
+      graphDone: false,
+    };
+    await saveTrip(trip);
+    await saveTripRoute(tripId, full);
+
+    // 1) Ставим карту и вышки в очередь с привязкой к tripId
+    const corridorPlan = planCorridor(routeName, full.points, true);
+    corridorPlan.tripId = tripId;
+    corridorPlan.forceCells = true;
+    enqueue(corridorPlan);
+
+    // 2) Скачиваем граф дорог для этой поездки
     try {
-      const graph = await downloadCorridor(full.points, { onProgress: (pct) => dlogEvery('граф', 1, `дороги для офлайна: ${Math.round(pct)}%`) });
-      await saveOfflineGraph(graph);
-      dlog(`офлайн-граф дорог сохранён: ${graph.lat.length} узлов, ${graph.to.length} рёбер`);
-    } catch (e) {
+      const graph = await downloadCorridor(full.points, {
+        onProgress: (pct) => {
+          updateTrip(tripId, { progress: { graph: Math.round(pct) } });
+        },
+      });
+      await saveTripGraph(tripId, graph);
+      await finalizeTripPart(tripId, 'graph');
+      dlog(`офлайн-граф дорог для поездки «${routeName}» сохранён`);
+    } catch (e: any) {
       dlogError('офлайн граф дорог', e);
+      await finalizeTripPart(tripId, 'graph', String(e?.message ?? e));
     }
 
     await reloadData();
-    setToast(`Маршрут «${routeName}» сохранён и подготовлен к поездке без интернета!`);
+    setToast(`Маршрут «${routeName}» сохранён и качается в фоне!`);
   }
 
   // ---------- Автоматический пересчёт при съезде с маршрута ----------
@@ -664,7 +891,7 @@ export default function App() {
     const tm = setTimeout(() => ctrl.abort(), 12_000);
     const destPlace: Place = plan.dest ?? { lat: plan.points[plan.points.length - 1].lat, lon: plan.points[plan.points.length - 1].lon, name: 'Финиш', detail: '' };
 
-    planRoute(from, destPlace, plan.mode, ctrl.signal)
+    planRouteVia(from, plan.stops ?? [], destPlace, plan.mode, ctrl.signal)
       .then((newPlan) => {
         clearTimeout(tm);
         const full: PlannedRoute = { ...newPlan, dest: destPlace };
@@ -701,6 +928,7 @@ export default function App() {
     setPlans({});
     setDest(null);
     setScreen('map');
+    setActiveTripId(null);
     reloadData();
   }
 
@@ -833,9 +1061,13 @@ export default function App() {
           setToast('Позиция отмечена');
         }}
         onLongPress={(e) => {
-          if (screen !== 'map' && screen !== 'search') return;
           const [lon, lat] = e.nativeEvent.lngLat;
-          pickDest({ name: 'Точка на карте', detail: `${lat.toFixed(5)}, ${lon.toFixed(5)}`, lat, lon });
+          const pt = { name: 'Точка на карте', detail: `${lat.toFixed(5)}, ${lon.toFixed(5)}`, lat, lon };
+          if (screen === 'map' && !plan) {
+            pickDest(pt);
+          } else {
+            setCand(pt);
+          }
         }}
       >
         {camera}
@@ -891,6 +1123,20 @@ export default function App() {
             layout={{ 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Regular'], 'text-size': 11, 'text-offset': [0, 1.2], 'text-anchor': 'top' }}
             paint={{ 'text-color': C.text, 'text-halo-color': C.card, 'text-halo-width': 1.5 }} />
         </GeoJSONSource>
+        <GeoJSONSource id="fuel" data={fuelGeo} cluster clusterRadius={45}>
+          <Layer type="circle" id="fuel-cluster" filter={['has', 'point_count']} paint={{ 'circle-radius': 17, 'circle-color': '#2f9e44', 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 }} />
+          <Layer type="symbol" id="fuel-cluster-n" filter={['has', 'point_count']}
+            layout={{ 'text-field': ['get', 'point_count_abbreviated'], 'text-font': ['Noto Sans Regular'], 'text-size': 13, 'text-allow-overlap': true }}
+            paint={{ 'text-color': '#ffffff' }} />
+          <Layer type="circle" id="fuel-dot" filter={['!', ['has', 'point_count']]} paint={{ 'circle-radius': 9, 'circle-color': ['get', 'c'], 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 }} />
+          <Layer type="symbol" id="fuel-name" minzoom={13} filter={['!', ['has', 'point_count']]}
+            layout={{ 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Regular'], 'text-size': 11, 'text-offset': [0, 1.3], 'text-anchor': 'top' }}
+            paint={{ 'text-color': C.text, 'text-halo-color': C.card, 'text-halo-width': 1.5 }} />
+        </GeoJSONSource>
+        <GeoJSONSource id="stops" data={stopsGeo}>
+          <Layer type="circle" id="stops-dot" paint={{ 'circle-radius': 11, 'circle-color': C.blue, 'circle-stroke-color': '#fff', 'circle-stroke-width': 2.5 }} />
+          <Layer type="symbol" id="stops-n" layout={{ 'text-field': ['get', 'n'], 'text-font': ['Noto Sans Regular'], 'text-size': 11 }} paint={{ 'text-color': '#ffffff' }} />
+        </GeoJSONSource>
         <GeoJSONSource id="dest" data={destGeo}>
           <Layer type="circle" id="dest-dot" paint={{ 'circle-radius': 9, 'circle-color': C.red, 'circle-stroke-color': '#fff', 'circle-stroke-width': 3 }} />
         </GeoJSONSource>
@@ -913,9 +1159,10 @@ export default function App() {
             <Icon name="magnify" size={24} color={C.sub} style={{ marginRight: 10 }} />
             <Text style={s.searchText}>Куда поедем?</Text>
           </Pressable>
+          <FuelChips on={fuelOn} busy={fuelBusy} onPress={toggleFuel} top={top + sz(60)} wide={wide} />
           {data?.plan && (
             <Pressable
-              style={[ui.card, s.savedPlanBanner, { top: top + sz(62) }, wide && { right: undefined, width: PANEL_W }]}
+              style={[ui.card, s.savedPlanBanner, { top: top + sz(108) }, wide && { right: undefined, width: PANEL_W }]}
               onPress={() => {
                 setPlan(data.plan);
                 engine.setRoute(data.plan!.points, data.plan!.maneuvers);
@@ -948,16 +1195,17 @@ export default function App() {
               </View>
             </View>
           </View>
-          <SpeedOverlay nav={nav} limit={curLimit} top={top + sz(data?.plan ? 132 : 66)} />
+          <SpeedOverlay nav={nav} limit={curLimit} top={top + sz(data?.plan ? 178 : 112)} />
           <WeatherChip now={wxNow} style={{ position: 'absolute', left: sz(12), bottom: bottom + sz(compact ? 92 : 108) }}
             onPress={() => wxNow && setToast(`Сейчас ${wxNow.temp > 0 ? '+' : ''}${Math.round(wxNow.temp)}°, ${wxNow.text}, ветер ${Math.round(wxNow.wind)} м/с`)} />
         </>
       )}
 
       {/* ---------- Кнопки справа ---------- */}
-      {screen !== 'search' && screen !== 'preview' && sheet === 'none' && (
+      {screen !== 'search' && screen !== 'preview' && sheet === 'none' && !fuelOn && (
         <View style={[s.side, { bottom: bottom + sz(compact ? 100 : 118) }, screen === 'nav' && { bottom: sz(230) }]}>
           <MapButtonGroup items={[
+            ...(screen === 'nav' ? [{ icon: 'gas-station' as IconName, active: fuelOn, onPress: toggleFuel }] : []),
             { icon: 'cog-outline', onPress: () => setSheet('settings') },
             { icon: view3d ? 'video-3d' : 'video-2d', active: view3d, onPress: () => { updateSettings({ ...settings, view3d: !view3d }); setFollow(true); } },
             { icon: 'traffic-light-outline', active: showTraffic, onPress: () => {
@@ -977,7 +1225,7 @@ export default function App() {
       )}
 
       {/* ---------- Ведение ---------- */}
-      {screen === 'nav' && sheet === 'none' && (
+      {screen === 'nav' && sheet === 'none' && !fuelOn && (
         <>
           <Appear key="man" from="top"><ManeuverCard nav={nav} hasRoute={!!plan} /></Appear>
           <SpeedOverlay nav={nav} limit={curLimit} top={plan ? sz(150) : sz(50)} />
@@ -993,7 +1241,8 @@ export default function App() {
             }}
             details={details}
             weather={wxRoute}
-            extra={(shownProblem || detours) ? <>
+            extra={(shownProblem || detours || plan?.stops?.length) ? <>
+              {plan?.stops?.length ? <StopsPill stops={plan.stops} onRemove={removeStop} /> : null}
               {shownProblem && <ProblemCard p={shownProblem} busy={avoiding} onAvoid={() => avoidProblem(shownProblem)} onSkip={() => { skippedProblems.current.set(probKey(shownProblem), Date.now() + 15 * 60_000); setProblem(null); setYProblem(null); }} />}
               {detours && <DetourCard offers={detours.offers} onTake={takeDetour} onSkip={skipDetour} />}
             </> : null}
@@ -1003,6 +1252,8 @@ export default function App() {
 
       {screen === 'preview' && dest && (
         <Appear key="preview"><RoutePreview dest={dest} plans={plans} loading={planning || !nav?.ready} mode={mode} onMode={setMode} onGo={go} trafficNote={trafficNote} weather={wxRoute}
+          trip={trips.find((t) => t.id === activeTripId)}
+          onRemoveStop={removeStop}
           extra={(shownProblem || detours) ? <>
             {shownProblem && <ProblemCard p={shownProblem} busy={avoiding} onAvoid={() => avoidProblem(shownProblem)} onSkip={() => { skippedProblems.current.set(probKey(shownProblem), Date.now() + 15 * 60_000); setProblem(null); setYProblem(null); }} />}
             {detours && <DetourCard offers={detours.offers} onTake={takeDetour} onSkip={skipDetour} />}
@@ -1013,8 +1264,29 @@ export default function App() {
           onClose={() => { setScreen('map'); setDest(null); setPlans({}); setFollow(true); }} /></Appear>
       )}
 
+      {fuelOn && (screen === 'map' || screen === 'nav') && sheet === 'none' && (
+        <Appear key="fuel"><FuelSheet stations={fuelList} reports={fuelReports} filter={fuelFilter} onFilter={setFuelFilter} busy={fuelBusy} note={fuelNote}
+          onRefresh={loadFuel} onClose={toggleFuel} onRoute={routeToFuel}
+          onAddStop={screen === 'map' && !dest ? undefined : (st) => { setFuelOn(false); addStop({ name: st.name, lat: st.lat, lon: st.lon }); }}
+          onMark={markFuel} /></Appear>
+      )}
+
+      {cand && (
+        <PlaceCard
+          place={cand}
+          top={top + sz(12)}
+          wide={wide}
+          onGo={() => { const p = cand; setCand(null); pickDest(p); }}
+          onAddStop={() => { const p = cand; setCand(null); addStop({ name: p.name, lat: p.lat, lon: p.lon }); }}
+          onClose={() => setCand(null)}
+        />
+      )}
+
       {screen === 'search' && (
-        <Appear key="search" from="fade"><SearchScreen near={nav?.ready ? { lat: nav.lat, lon: nav.lon } : undefined} onPick={pickDest} onClose={() => setScreen('map')} /></Appear>
+        <Appear key="search" from="fade"><SearchScreen near={nav?.ready ? { lat: nav.lat, lon: nav.lon } : undefined} trips={trips} recent={recent} onPick={pickDest} onClose={() => setScreen('map')}
+          onOpenTrip={openTrip} onDeleteTrip={removeTrip} onToast={setToast}
+          onFuelCommand={() => { setScreen('map'); if (!fuelOn) toggleFuel(); }}
+          onDeleteRecent={(p) => removeRecent(p).then(setRecent)} onClearRecent={() => clearRecent().then(setRecent)} /></Appear>
       )}
 
       {picking && (
@@ -1055,7 +1327,7 @@ export default function App() {
       )}
 
       {sheet === 'maps' && (
-        <Appear key="maps" from="fade"><MapDownloads near={nav?.ready ? { lat: nav.lat, lon: nav.lon } : undefined} route={data?.route ?? null}
+        <Appear key="maps" from="fade"><MapDownloads near={nav?.ready ? { lat: nav.lat, lon: nav.lon } : undefined} route={data?.route ?? null} trips={trips} onDeleteTrip={removeTrip}
           routeName={data?.plan?.dest?.name} usingFileMap={!!data?.mapUri} onClose={() => setSheet('settings')}
           areaCells={areaCells} cellsTotal={data?.cells?.size ?? 0} showCells={showCells}
           onShowCells={(v) => { setShowCells(v); if (v) setToast(`На карте — вышки рядом с вами (${engine.cellDb?.near(nav ? { lat: nav.lat, lon: nav.lon } : { lat: 0, lon: 0 }, 40).length ?? 0})`); }} /></Appear>

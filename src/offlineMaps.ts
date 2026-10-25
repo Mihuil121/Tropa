@@ -36,9 +36,15 @@ export function tileCount(b: Bounds, minZ: number, maxZ: number): number {
   return n;
 }
 
-export type AreaPlan = { name: string; parts: { bounds: Bounds; minZ: number; maxZ: number }[]; tiles: number; mb: number;
+export type AreaPlan = {
+  name: string;
+  parts: { bounds: Bounds; minZ: number; maxZ: number }[];
+  tiles: number;
+  mb: number;
   cellBoxes?: Bounds[];  // где заодно скачать вышки (см. cellDownload)
   cellsOnly?: boolean;   // карта уже есть — только вышки
+  tripId?: string;       // привязка к конкретной поездке
+  forceCells?: boolean;  // качать вышки даже если глобальный свитч отключен
 };
 
 export function planCity(name: string, center: LatLon, rKm = 12): AreaPlan {
@@ -53,6 +59,7 @@ export function packTrip(name: string, pts: LatLon[]): AreaPlan {
   dlog(`режим поездки: запущен скачивание всего для «${name}»`);
   return plan;
 }
+
 export function planRoute(name: string, pts: LatLon[]): AreaPlan {
   const parts: AreaPlan['parts'] = [];
   const margin = 1.5;
@@ -93,23 +100,38 @@ function finish(name: string, parts: AreaPlan['parts']): AreaPlan {
   return { name, parts, tiles, mb: Math.round((tiles * KB_PER_TILE) / 1024) };
 }
 
-export type PackInfo = { id: string; name: string; group: string; percent: number; mb: number; state: string };
+export type PackInfo = {
+  id: string;
+  name: string;
+  group: string;
+  tripId?: string;
+  percent: number;
+  mb: number;
+  bytes: number;
+  state: string;
+};
 
 /** Начать скачивание. onProgress — общий процент по всем частям. */
 export async function download(plan: AreaPlan, onProgress: (pct: number, done: boolean, err?: string) => void) {
-  const group = `${plan.name}#${Date.now()}`;
+  const group = plan.tripId ? `trip:${plan.tripId}` : `${plan.name}#${Date.now()}`;
   const pct = new Map<number, number>();
   const report = () => {
-    const total = [...pct.values()].reduce((a, b) => a + b, 0) / plan.parts.length;
+    const total = [...pct.values()].reduce((a, b) => a + b, 0) / (plan.parts.length || 1);
     onProgress(total, total >= 99.9);
   };
-  dlog(`карты: качаю «${plan.name}», частей ${plan.parts.length}, ≈${plan.tiles} плиток ≈${plan.mb} МБ`);
+  dlog(`карты: качаю «${plan.name}» (tripId=${plan.tripId ?? 'none'}), частей ${plan.parts.length}, ≈${plan.tiles} плиток ≈${plan.mb} МБ`);
   for (let i = 0; i < plan.parts.length; i++) {
     const part = plan.parts[i];
     pct.set(i, 0);
     try {
       await OfflineManager.createPack(
-        { mapStyle: ONLINE_STYLE, bounds: part.bounds, minZoom: part.minZ, maxZoom: part.maxZ, metadata: { name: plan.name, group, part: i } },
+        {
+          mapStyle: ONLINE_STYLE,
+          bounds: part.bounds,
+          minZoom: part.minZ,
+          maxZoom: part.maxZ,
+          metadata: { name: plan.name, group, part: i, ...(plan.tripId ? { tripId: plan.tripId } : {}) },
+        },
         (_pack, st) => { pct.set(i, st.percentage); report(); },
         (_pack, err) => { dlog(`⚠ карты: часть ${i}: ${err.message}`); const total = [...pct.values()].reduce((a, b) => a + b, 0) / plan.parts.length; onProgress(total, false, err.message); },
       );
@@ -125,20 +147,26 @@ export async function download(plan: AreaPlan, onProgress: (pct: number, done: b
 export async function listAreas(): Promise<PackInfo[]> {
   let packs: OfflinePack[] = [];
   try { packs = await OfflineManager.getPacks(); } catch (e) { dlogError('карты: getPacks', e); return []; }
-  const groups = new Map<string, { ids: string[]; name: string; pct: number[]; bytes: number; active: boolean }>();
+  const groups = new Map<string, { ids: string[]; name: string; tripId?: string; pct: number[]; bytes: number; active: boolean }>();
   for (const p of packs) {
     const g = String(p.metadata?.group ?? p.id);
     let st;
     try { st = await p.status(); } catch { continue; }
-    const cur = groups.get(g) ?? { ids: [], name: String(p.metadata?.name ?? 'Карта'), pct: [], bytes: 0, active: false };
+    const tripId = p.metadata?.tripId ? String(p.metadata.tripId) : undefined;
+    const cur = groups.get(g) ?? { ids: [], name: String(p.metadata?.name ?? 'Карта'), tripId, pct: [], bytes: 0, active: false };
     cur.ids.push(p.id); cur.pct.push(st.percentage); cur.bytes += st.completedResourceSize || st.completedTileSize || 0;
     cur.active ||= st.state === 'active';
     groups.set(g, cur);
   }
   return [...groups.entries()].map(([g, v]) => ({
-    id: v.ids.join(','), group: g, name: v.name,
-    percent: v.pct.reduce((a, b) => a + b, 0) / v.pct.length,
-    mb: Math.round(v.bytes / 1e6), state: v.active ? 'качается' : 'готово',
+    id: v.ids.join(','),
+    group: g,
+    name: v.name,
+    tripId: v.tripId,
+    percent: v.pct.reduce((a, b) => a + b, 0) / (v.pct.length || 1),
+    mb: Math.round(v.bytes / 1e6),
+    bytes: v.bytes,
+    state: v.active ? 'качается' : 'готово',
   }));
 }
 
@@ -148,9 +176,25 @@ export async function deleteArea(ids: string) {
   }
 }
 
+/** Удаление паков карт конкретной поездки по ее tripId */
+export async function deleteTripMaps(tripId: string) {
+  let packs: OfflinePack[] = [];
+  try { packs = await OfflineManager.getPacks(); } catch (e) { return; }
+  for (const p of packs) {
+    const meta = p.metadata ?? {};
+    if (meta.tripId === tripId || meta.group === `trip:${tripId}` || String(meta.group).startsWith(`trip:${tripId}`)) {
+      try { await OfflineManager.deletePack(p.id); } catch (e) { dlogError('deleteTripMaps', e); }
+    }
+  }
+}
+
 // ---------------- Очередь загрузок: города качаются по одному, даже если экран закрыт ----------------
 
-export type QueueState = { current: { name: string; pct: number; err?: string; phase?: 'карта' | 'вышки' } | null; waiting: string[]; withCells: boolean };
+export type QueueState = {
+  current: { name: string; tripId?: string; pct: number; err?: string; phase?: 'карта' | 'вышки' } | null;
+  waiting: string[];
+  withCells: boolean;
+};
 
 /** Что делать после карты (App подключает сюда скачивание вышек). */
 type AfterMap = (plan: AreaPlan, progress: (pct: number, note?: string) => void) => Promise<void>;
@@ -167,9 +211,12 @@ const notify = () => qListeners.forEach((l) => l());
 export function queueState(): QueueState { return { current, waiting: queue.map((p) => p.name), withCells }; }
 export function subscribeQueue(l: () => void) { qListeners.add(l); return () => { qListeners.delete(l); }; }
 
-/** Поставить в очередь (повтор того же имени не добавляем). */
+/** Поставить в очередь (повтор того же имени/tripId не добавляем). */
 export function enqueue(plan: AreaPlan) {
-  if (current?.name === plan.name || queue.some((p) => p.name === plan.name)) return;
+  const isDuplicate = plan.tripId
+    ? current?.tripId === plan.tripId || queue.some((p) => p.tripId === plan.tripId)
+    : current?.name === plan.name || queue.some((p) => p.name === plan.name);
+  if (isDuplicate) return;
   if (plan.cellsOnly) plan = { ...plan, parts: [] };
   queue.push(plan);
   notify();
@@ -177,21 +224,21 @@ export function enqueue(plan: AreaPlan) {
 }
 
 export function cancelQueued(name: string) {
-  const i = queue.findIndex((p) => p.name === name);
+  const i = queue.findIndex((p) => p.name === name || p.tripId === name);
   if (i >= 0) { queue.splice(i, 1); notify(); }
 }
 
 async function runNext() {
   if (current || !queue.length) return;
   const plan = queue.shift()!;
-  current = { name: plan.name, pct: 0, phase: 'карта' };
+  current = { name: plan.name, tripId: plan.tripId, pct: 0, phase: 'карта' };
   notify();
   // Сначала за 4 секунды проверяем, отвечает ли сервер карт, — а не ждём минуты впустую.
   let mapReachable = true;
   if (!plan.cellsOnly && plan.parts.length) {
     mapReachable = await probe(ONLINE_STYLE, 4000);
     if (!mapReachable) {
-      current = { name: plan.name, pct: 0, phase: 'карта', err: 'сервер карт не отвечает (часто так без VPN) — качаю только вышки' };
+      current = { name: plan.name, tripId: plan.tripId, pct: 0, phase: 'карта', err: 'сервер карт не отвечает (часто так без VPN) — качаю только вышки' };
       notify();
     }
   }
@@ -202,20 +249,20 @@ async function runNext() {
     const watch = setInterval(() => { if (Date.now() - lastChange > 90_000) { current = { ...current!, err: 'загрузка остановилась — нет ответа от сервера карт' }; notify(); finish(); } }, 10_000);
     download(plan, (pct, done, err) => {
       if (pct !== lastPct) { lastPct = pct; lastChange = Date.now(); }
-      current = { name: plan.name, pct: Math.max(pct, current?.pct ?? 0), err: err ?? current?.err, phase: 'карта' };
+      current = { name: plan.name, tripId: plan.tripId, pct: Math.max(pct, current?.pct ?? 0), err: err ?? current?.err, phase: 'карта' };
       notify();
       if (done) finish();
     }).catch(() => finish());
   });
-  dlog(`карты: «${plan.name}» — ${current?.err ? 'остановлено: ' + current.err : 'готово'}`);
-  // Потом — вышки этой же области (чтобы место находилось и без GPS)
-  if ((withCells || plan.cellsOnly) && afterMap && plan.cellBoxes?.length) {
-    current = { name: plan.name, pct: 0, phase: 'вышки' };
+  dlog(`карты: «${plan.name}» (tripId=${plan.tripId ?? 'none'}) — ${current?.err ? 'остановлено: ' + current.err : 'готово'}`);
+  // Потом — вышки этой же области (если включено глобально, только вышки или принудительно forceCells)
+  if ((withCells || plan.cellsOnly || plan.forceCells) && afterMap && plan.cellBoxes?.length) {
+    current = { name: plan.name, tripId: plan.tripId, pct: 0, phase: 'вышки' };
     notify();
     try {
-      await afterMap(plan, (pct, note) => { current = { name: plan.name, pct, phase: 'вышки', err: note }; notify(); });
+      await afterMap(plan, (pct, note) => { current = { name: plan.name, tripId: plan.tripId, pct, phase: 'вышки', err: note }; notify(); });
     } catch (e) {
-      current = { name: plan.name, pct: current?.pct ?? 0, phase: 'вышки', err: `вышки: ${(e as Error)?.message ?? e}` };
+      current = { name: plan.name, tripId: plan.tripId, pct: current?.pct ?? 0, phase: 'вышки', err: `вышки: ${(e as Error)?.message ?? e}` };
       notify();
       dlogError('вышки', e);
     }

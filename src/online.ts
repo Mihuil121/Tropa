@@ -52,6 +52,7 @@ export type Place = {
 };
 
 export type TravelMode = 'car' | 'walk' | 'scooter';
+export type Stop = { name: string; lat: number; lon: number };
 
 export const MODES: { id: TravelMode; label: string; icon: 'car' | 'walk' | 'scooter-electric' }[] = [
   { id: 'car', label: 'Авто', icon: 'car' },
@@ -71,6 +72,7 @@ export type PlannedRoute = {
   timeS: number;
   lengthM: number;
   dest?: Place;
+  stops?: Stop[];
   createdAt: number;
   limits?: SpeedLimit[];  // знаки ограничения скорости (из OpenStreetMap), сохраняются для офлайна
   /** Построено без дорожного сервера (офлайн). */
@@ -467,7 +469,7 @@ export async function planOfflineGraph(from: LatLon, to: LatLon, mode: TravelMod
   try {
     const { getOfflineGraph } = await import('./data');
     const { route, graphPathToPlannedRoute } = await import('./offlineRouter');
-    const g = await getOfflineGraph();
+    const g = await getOfflineGraph(from, to);
     if (!g) return null;
     const path = route(g, from, to, mode);
     if (!path || path.length < 2) return null;
@@ -845,4 +847,36 @@ export function maneuverArrow(type: number): string {
     case 4: case 5: case 6: return '⚑';
     default: return '↑';
   }
+}
+
+export async function planRouteVia(from: LatLon, stops: Stop[], to: LatLon, mode: TravelMode, signal?: AbortSignal, avoid?: LatLon[]): Promise<PlannedRoute> {
+  if (!stops.length) return planRoute(from, to, mode, signal, avoid);
+  const chain: LatLon[] = [from, ...stops, to];
+  // Каждый отрезок строим обычным planRoute (работает и онлайн, и в офлайне), потом склеиваем.
+  const legs = await Promise.all(chain.slice(0, -1).map((a, i) => planRoute(a, chain[i + 1], mode, signal, avoid)));
+  const points: LatLon[] = [];
+  const maneuvers: Maneuver[] = [];
+  let timeS = 0, lengthM = 0;
+  legs.forEach((leg, i) => {
+    const base = points.length ? points.length - 1 : 0; // индекс общей точки склейки
+    points.push(...(points.length ? leg.points.slice(1) : leg.points));
+    const notLast = i < legs.length - 1;
+    leg.maneuvers.forEach((m, k) => {
+      if (i > 0 && k === 0 && (m.type === 1 || m.type === 2 || m.type === 3)) return; // «Начните движение» второго отрезка не нужно
+      const isStop = notLast && k === leg.maneuvers.length - 1;                          // «Вы прибыли» посреди маршрута = остановка
+      maneuvers.push({ ...m, idx: base + m.idx, ...(isStop ? { text: `Остановка: ${stops[i].name}` } : {}) });
+    });
+    timeS += leg.timeS;
+    lengthM += leg.lengthM;
+  });
+  const lastLeg = legs[legs.length - 1];
+  return {
+    ...lastLeg, mode, points, maneuvers, timeS, lengthM, stops, createdAt: Date.now(),
+    dest: undefined,        // dest выставляет вызывающий код
+    limits: undefined,      // знаки скорости последнего отрезка к склеенному маршруту не подходят
+    seaCrossing: legs.some((l) => l.seaCrossing),
+    offline: legs.some((l) => l.offline) || undefined,
+    offlineGraph: legs.some((l) => l.offlineGraph) || undefined,
+    onDevice: legs.every((l) => l.onDevice) || undefined,
+  };
 }

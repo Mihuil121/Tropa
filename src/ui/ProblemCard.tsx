@@ -4,6 +4,7 @@ import { Pressable, Text, View } from 'react-native';
 import type { RouteProblem } from '../waze';
 import { fmtDistance, fmtDuration } from '../online';
 import { Icon } from './Icon';
+import { AnimatedIcon } from './AnimatedIcon';
 import { C, shadow, themed, sz } from './theme';
 
 export function ProblemCard({ p, busy, onAvoid, onSkip }: { p: RouteProblem; busy: boolean; onAvoid: () => void; onSkip: () => void }) {
@@ -63,7 +64,7 @@ export function ProblemCard({ p, busy, onAvoid, onSkip }: { p: RouteProblem; bus
           ]}
         >
           {busy ? (
-            <Icon name="loading" size={16} color="#fff" />
+            <AnimatedIcon name="loading" size={20} color="#ffffff" loop />
           ) : (
             <Icon name="directions" size={16} color="#fff" />
           )}

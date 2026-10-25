@@ -9,7 +9,8 @@ import type { LatLon } from './core/geo';
 import { parseGeoJson, parseGpx } from './core/route';
 import { CellDb } from './core/cells';
 import type { PlannedRoute } from './online';
-import { loadGraph, type Graph, type StoredGraph } from './offlineRouter';
+import type { Graph } from './offlineRouter';
+import { getOfflineGraphForCoords } from './trips';
 
 const dir = new Directory(Paths.document, 'tropa');
 const mapFile = () => new File(dir, 'map.pmtiles');
@@ -17,25 +18,9 @@ const routeFile = () => new File(dir, 'route.json');
 const cellsFile = () => new File(dir, 'cells.json');
 const settingsFile = () => new File(dir, 'settings.json');
 const learnedFile = () => new File(dir, 'learned-cells.json');
-const graphFile = () => new File(dir, 'offline-graph.json');
 
-export async function loadOfflineGraph(): Promise<any | null> {
-  ensureDir();
-  const f = graphFile();
-  if (!f.exists) return null;
-  try { return JSON.parse(await f.text()); } catch { return null; }
-}
-
-// Граф читаем с диска один раз и держим в памяти (раньше — заново на каждый маршрут, по три раза сразу).
-let graphCache: Promise<Graph | null> | null = null;
-export function getOfflineGraph(): Promise<Graph | null> {
-  return (graphCache ??= loadOfflineGraph().then((raw) => loadGraph(raw)).catch(() => null));
-}
-
-export async function saveOfflineGraph(graph: StoredGraph) {
-  ensureDir();
-  await graphFile().write(JSON.stringify(graph));
-  graphCache = Promise.resolve(loadGraph(graph));
+export function getOfflineGraph(from?: LatLon, to?: LatLon): Promise<Graph | null> {
+  return getOfflineGraphForCoords(from, to);
 }
 
 export type Kind = 'map' | 'route' | 'cells';
