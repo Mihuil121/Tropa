@@ -1,24 +1,19 @@
-apply plugin: 'com.android.library'
-apply plugin: 'kotlin-android'
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
 
 group = 'expo.modules.operaproxy'
 version = '0.1.0'
 
 android {
-  namespace 'expo.modules.operaproxy'
-  compileSdkVersion 37
+  namespace "expo.modules.operaproxy"
   defaultConfig {
-    minSdkVersion 24
-    targetSdkVersion 37
-  }
-  sourceSets {
-    main {
-      jniLibs.srcDirs = ['src/main/jniLibs']
-    }
+    versionCode 1
+    versionName "0.1.0"
   }
 }
 
 dependencies {
   implementation project(':expo-modules-core')
-  implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlinVersion"
 }

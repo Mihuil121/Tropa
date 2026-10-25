@@ -1,6 +1,6 @@
 // Настройки: карт, визуального стиля, трафика, датчиков и сведений о приложении.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import type { Kind, Loaded, Settings } from '../data';
 import type { ObdState } from '../obdLink';
@@ -10,7 +10,7 @@ import type { LatLon } from '../core/geo';
 import { C, ui, themed, useWide, useInsets, sz } from './theme';
 import { oldDevice } from '../device';
 import { voice } from '../voice';
-import OperaProxy from '../../modules/opera-proxy';
+import { startOperaProxy, stopOperaProxy, subscribeOperaProxy, type OperaProxyStatus } from '../../modules/opera-proxy';
 
 type Category = 'maps' | 'view' | 'traffic' | 'sensors' | 'about';
 
@@ -36,17 +36,22 @@ export function SettingsSheet({ data, settings, onSettings, onImport, obd, adapt
   const [key, setKey] = useState(settings.gisKey ?? '');
   const [keySaved, setKeySaved] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
+  const [operaStatus, setOperaStatus] = useState<OperaProxyStatus>({ state: 'stopped' });
+
+  useEffect(() => {
+    return subscribeOperaProxy((st) => setOperaStatus(st));
+  }, []);
 
   const saveGisKey = () => {
-    onSettings({ ...settings, gisKey: key.trim(), traffic: settings.traffic ?? true });
+    onSettings({ ...settings, gisKey: key.trim(), traffic: true });
     setKeySaved(true);
-    setTimeout(() => setKeySaved(false), 2000);
+    setTimeout(() => setKeySaved(false), 3000);
   };
 
   const resetAllSettings = () => {
     Alert.alert(
-      'Сброс настроек',
-      'Вы уверены, что хотите сбросить все настройки к значениям по умолчанию?',
+      'Сбросить все настройки?',
+      'Приложение вернется к исходным параметрам.',
       [
         { text: 'Отмена', style: 'cancel' },
         { text: 'Сбросить', style: 'destructive', onPress: () => {
@@ -125,6 +130,57 @@ export function SettingsSheet({ data, settings, onSettings, onImport, obd, adapt
 
             <View style={s.card}>
               <View style={s.cardHeader}>
+                <View style={s.cardIcon}><Icon name="shield-key-outline" size={20} color={C.blue} /></View>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.cardTitle}>Обход блокировок (Opera VPN)</Text>
+                  <Text style={s.cardSub}>Локальный прокси для загрузки карт и зеркал</Text>
+                </View>
+                <Switch
+                  value={!!settings.operaProxy}
+                  onValueChange={(v) => {
+                    onSettings({ ...settings, operaProxy: v });
+                    if (v) {
+                      startOperaProxy({ country: settings.operaCountry || 'EU' });
+                    } else {
+                      stopOperaProxy();
+                    }
+                  }}
+                />
+              </View>
+
+              <Text style={[ui.sub, { marginBottom: 10, lineHeight: 18 }]}>
+                Когда включено, запросы карт, маршрутов и заправок идут через серверы Opera. Позиция по GPS/вышкам определяется отдельно и через прокси не идёт. Координаты в запросах к картам видны Opera.
+              </Text>
+
+              {!!settings.operaProxy && (
+                <View style={{ marginTop: 6 }}>
+                  <Text style={[ui.sub, { fontWeight: '700', marginBottom: 6 }]}>Выбор страны прокси:</Text>
+                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
+                    {(['EU', 'AS', 'AM'] as const).map((c) => (
+                      <Pressable
+                        key={c}
+                        onPress={() => {
+                          const nextCountry = c;
+                          onSettings({ ...settings, operaCountry: nextCountry });
+                          startOperaProxy({ country: nextCountry });
+                        }}
+                        style={[s.fchip, (settings.operaCountry || 'EU') === c && { backgroundColor: C.blue }]}
+                      >
+                        <Text style={[s.fchipText, (settings.operaCountry || 'EU') === c && { color: '#fff' }]}>
+                          {c === 'EU' ? 'Европа (EU)' : c === 'AS' ? 'Азия (AS)' : 'Америка (AM)'}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                  <Text style={[ui.sub, { color: operaStatus.state === 'ready' ? C.green : operaStatus.state === 'failed' ? C.redText : C.blue, fontWeight: '600' }]}>
+                    Статус: {operaStatus.state === 'ready' ? `Готов (порт ${operaStatus.port})` : operaStatus.state === 'starting' ? 'Запускается…' : operaStatus.state === 'failed' ? `Ошибка: ${operaStatus.lastError || 'сбой старта'}` : 'Остановлен'}
+                  </Text>
+                </View>
+              )}
+            </View>
+
+            <View style={s.card}>
+              <View style={s.cardHeader}>
                 <View style={s.cardIcon}><Icon name="folder-download-outline" size={20} color={C.blue} /></View>
                 <View style={{ flex: 1 }}>
                   <Text style={s.cardTitle}>Пользовательские файлы</Text>
@@ -166,38 +222,10 @@ export function SettingsSheet({ data, settings, onSettings, onImport, obd, adapt
 
             <View style={s.card}>
               <View style={s.cardHeader}>
-                <View style={s.cardIcon}><Icon name="speedometer" size={20} color={C.blue} /></View>
-                <View style={{ flex: 1 }}>
-                  <Text style={s.cardTitle}>Лёгкий режим</Text>
-                  <Text style={s.cardSub}>Для старых и слабых телефонов: без 3D-домов и анимаций, карта проще{oldDevice ? ' · ваш телефон определён как старый' : ''}</Text>
-                </View>
-              </View>
-              <View style={s.seg}>
-                {([['auto', 'Авто', 'auto-fix'], ['on', 'Вкл', 'leaf'], ['off', 'Выкл', 'rocket-launch-outline']] as const).map(([v, label, icon]) => {
-                  const sel = (settings.lite ?? 'auto') === v;
-                  return (
-                    <Pressable key={v} style={[s.segBtn, sel && s.segSel]} onPress={() => onSettings({ ...settings, lite: v, view3d: undefined })}>
-                      <Icon name={icon} size={20} color={sel ? '#fff' : C.text} />
-                      <Text style={[s.segText, sel && { color: '#fff' }]}>{label}</Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
-
-            <View style={s.card}>
-              <View style={s.cardHeader}>
                 <View style={s.cardIcon}><Icon name="volume-high" size={20} color={C.blue} /></View>
                 <View style={{ flex: 1 }}>
-                  <Text style={s.cardTitle}>Звуковое сопровождение</Text>
-                  <Text style={s.cardSub}>Голосовые подсказки во время движения</Text>
-                </View>
-              </View>
-
-              <View style={[ui.row, { paddingVertical: 8 }]}>
-                <View style={{ flex: 1, paddingRight: 12 }}>
-                  <Text style={ui.body}>Голосовые подсказки</Text>
-                  <Text style={ui.sub}>Озвучивание маневров, камер, дорожных знаков и состояния GPS на русском языке.</Text>
+                  <Text style={s.cardTitle}>Голосовые подсказки</Text>
+                  <Text style={s.cardSub}>Озвучка маневров на русском языке</Text>
                 </View>
                 <Switch value={settings.voice !== false} onValueChange={(v) => {
                   onSettings({ ...settings, voice: v });
@@ -297,59 +325,6 @@ export function SettingsSheet({ data, settings, onSettings, onImport, obd, adapt
                 />
               )}
             </View>
-
-            <View style={s.card}>
-              <View style={s.cardHeader}>
-                <View style={s.cardIcon}><Icon name="shield-key-outline" size={20} color={C.blue} /></View>
-                <View style={{ flex: 1 }}>
-                  <Text style={s.cardTitle}>Обход блокировок (Opera VPN)</Text>
-                  <Text style={s.cardSub}>Локальный прокси для загрузки карт и зеркал</Text>
-                </View>
-                <Switch
-                  value={!!settings.operaProxy}
-                  onValueChange={(v) => {
-                    onSettings({ ...settings, operaProxy: v });
-                    if (v && OperaProxy?.isSupported()) {
-                      OperaProxy.start({ country: settings.operaCountry || 'EU' }).catch(() => {});
-                    } else if (OperaProxy) {
-                      OperaProxy.stop();
-                    }
-                  }}
-                />
-              </View>
-
-              <Text style={[ui.sub, { marginBottom: 10, lineHeight: 18 }]}>
-                Запускает встроенный локальный прокси Opera для загрузки зеркал Overpass и карт. Все данные местоположения обрабатываются на вашем устройстве.
-              </Text>
-
-              {!!settings.operaProxy && (
-                <View style={{ marginTop: 6 }}>
-                  <Text style={[ui.sub, { fontWeight: '700', marginBottom: 6 }]}>Выбор страны прокси:</Text>
-                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
-                    {(['EU', 'AS', 'AM'] as const).map((c) => (
-                      <Pressable
-                        key={c}
-                        onPress={() => {
-                          const nextCountry = c;
-                          onSettings({ ...settings, operaCountry: nextCountry });
-                          if (OperaProxy?.isSupported()) {
-                            OperaProxy.start({ country: nextCountry }).catch(() => {});
-                          }
-                        }}
-                        style={[s.fchip, (settings.operaCountry || 'EU') === c && { backgroundColor: C.blue }]}
-                      >
-                        <Text style={[s.fchipText, (settings.operaCountry || 'EU') === c && { color: '#fff' }]}>
-                          {c === 'EU' ? 'Европа (EU)' : c === 'AS' ? 'Азия (AS)' : 'Америка (AM)'}
-                        </Text>
-                      </Pressable>
-                    ))}
-                  </View>
-                  <Text style={[ui.sub, { color: C.blue, fontWeight: '600' }]}>
-                    Статус: {OperaProxy?.status().state === 'ready' ? `Готов (порт ${OperaProxy.status().port})` : OperaProxy?.status().state === 'starting' ? 'Запускается…' : 'Остановлен'}
-                  </Text>
-                </View>
-              )}
-            </View>
           </>
         )}
 
@@ -380,31 +355,59 @@ export function SettingsSheet({ data, settings, onSettings, onImport, obd, adapt
               <View style={s.cardHeader}>
                 <View style={s.cardIcon}><Icon name="bluetooth" size={20} color={C.blue} /></View>
                 <View style={{ flex: 1 }}>
-                  <Text style={s.cardTitle}>OBD2 Bluetooth-адаптер</Text>
-                  <Text style={s.cardSub}>Точная скорость автомобиля с бортового компьютера</Text>
+                  <Text style={s.cardTitle}>Датчики автомобиля (OBD-II)</Text>
+                  <Text style={s.cardSub}>Чтение скорости и оборотов через ELM327 Bluetooth</Text>
                 </View>
-                {obd.s === 'on' ? (
-                  <View style={[s.badge, { backgroundColor: '#e6f4ea' }]}><Text style={[s.badgeText, { color: C.green }]}>Подключено ✓</Text></View>
-                ) : (
-                  <View style={[s.badge, { backgroundColor: C.chip }]}><Text style={[s.badgeText, { color: C.sub }]}>Отключено</Text></View>
-                )}
+                {adapters.length > 0 && <View style={[s.badge, { backgroundColor: '#e6f4ea' }]}><Text style={[s.badgeText, { color: C.green }]}>Найдено {adapters.length}</Text></View>}
               </View>
 
               <Text style={[ui.sub, { marginBottom: 10, lineHeight: 18 }]}>
-                Предварительно выполните сопряжение OBD2-адаптера в настройках Bluetooth устройства (PIN 1234 или 0000).
+                {obd.s === 'on' ? 'Адаптер подключен ✓' : obd.s === 'connecting' ? 'Подключаемся…' : 'Подключите ELM327 для чтения скорости в тоннелях и при глушении GPS.'}
               </Text>
 
               {obd.s === 'on' ? (
-                <Button small kind="secondary" text="Отключить OBD" onPress={onDisconnectObd} />
+                <Button small kind="danger" text="Отключить OBD" onPress={onDisconnectObd} />
               ) : (
-                <>
-                  {adapters.map((a) => <Row key={a.address} title={a.name} sub={a.address} onPress={() => onConnectObd(a.address)} />)}
-                  <View style={{ flexDirection: 'row', marginTop: 8 }}>
-                    <Button small kind="secondary" text={adapters.length ? 'Обновить список Bluetooth' : 'Поиск OBD2 адаптеров'} onPress={onScanObd} />
-                  </View>
-                </>
+                <View style={{ gap: 8 }}>
+                  <Button small kind="primary" text="Найти адаптеры" onPress={onScanObd} />
+                  {adapters.map((a) => (
+                    <Pressable key={a.address} style={s.segBtn} onPress={() => onConnectObd(a.address)}>
+                      <Text style={{ fontWeight: '700', color: C.text }}>{a.name}</Text>
+                      <Text style={{ fontSize: 11, color: C.sub }}>{a.address}</Text>
+                    </Pressable>
+                  ))}
+                </View>
               )}
-              {!!obd.err && <Text style={[ui.sub, { color: C.red, marginTop: 8 }]}>{obd.err}</Text>}
+            </View>
+
+            <View style={s.card}>
+              <View style={s.cardHeader}>
+                <View style={s.cardIcon}><Icon name="speedometer" size={20} color={C.blue} /></View>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.cardTitle}>Самодиагностика</Text>
+                  <Text style={s.cardSub}>Проверка датчиков и работы офлайн-ядра</Text>
+                </View>
+              </View>
+
+              <Text style={[ui.sub, { marginBottom: 12, lineHeight: 18 }]}>
+                Запустите тест для оценки точности позиционирования, работы гироскопа и доступности спутников.
+              </Text>
+
+              {onSelfTest && (
+                <Pressable
+                  style={({ pressed }) => [s.bigBanner, pressed && { opacity: 0.85 }]}
+                  onPress={() => {
+                    const r = onSelfTest();
+                    setTestResult(`${r.score}% — ${r.summary}`);
+                  }}
+                >
+                  <Icon name="check-decagram" size={26} color="#fff" style={{ marginRight: 12 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.bigTitle}>Проверить готовность</Text>
+                    <Text style={s.bigSub}>{testResult ?? 'Тест GPS, вышек и сенсоров (30 сек)'}</Text>
+                  </View>
+                </Pressable>
+              )}
             </View>
           </>
         )}
@@ -412,32 +415,6 @@ export function SettingsSheet({ data, settings, onSettings, onImport, obd, adapt
         {/* CATEGORY: ABOUT */}
         {cat === 'about' && (
           <>
-            {onSelfTest && (
-              <View style={s.card}>
-                <View style={s.cardHeader}>
-                  <View style={s.cardIcon}><Icon name="shield-check-outline" size={20} color={C.blue} /></View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={s.cardTitle}>Диагностика перед поездкой</Text>
-                    <Text style={s.cardSub}>Проверка датчиков и сигналов перед выездом</Text>
-                  </View>
-                </View>
-
-                <Pressable
-                  style={({ pressed }) => [s.bigBanner, { backgroundColor: C.blue }, pressed && { opacity: 0.85 }]}
-                  onPress={() => {
-                    const res = onSelfTest();
-                    setTestResult(`Оценка: ${res.score}/100. ${res.summary}`);
-                  }}
-                >
-                  <Icon name="checkbox-marked-circle-outline" size={26} color="#fff" style={{ marginRight: 12 }} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={s.bigTitle}>Проверить готовность</Text>
-                    <Text style={s.bigSub}>{testResult ?? 'Тест GPS, вышек и сенсоров (30 сек)'}</Text>
-                  </View>
-                </Pressable>
-              </View>
-            )}
-
             <View style={s.card}>
               <View style={s.cardHeader}>
                 <View style={s.cardIcon}><Icon name="information-outline" size={20} color={C.blue} /></View>
@@ -496,16 +473,16 @@ const s = themed(() => ({
   bigBanner: { flexDirection: 'row', alignItems: 'center', backgroundColor: C.blue, borderRadius: sz(16), padding: sz(14), marginTop: sz(4) },
   bigTitle: { color: '#fff', fontSize: sz(15), fontWeight: '700' },
   bigSub: { color: '#dbe6ff', fontSize: sz(12), marginTop: 2 },
-  fchip: { backgroundColor: C.chip, borderRadius: sz(14), paddingHorizontal: sz(12), paddingVertical: sz(6) },
-  fchipText: { fontSize: sz(12), fontWeight: '700', color: C.text },
   seg: { flexDirection: 'row', gap: sz(8), marginTop: sz(6) },
   segBtn: { flex: 1, alignItems: 'center', paddingVertical: sz(10), borderRadius: sz(12), backgroundColor: C.chip },
   segSel: { backgroundColor: C.blue },
   segText: { fontSize: sz(12), fontWeight: '600', color: C.text, marginTop: sz(4) },
   settingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: sz(8), borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: C.line },
-  input: { backgroundColor: C.chip, borderRadius: sz(12), paddingHorizontal: sz(12), height: sz(44), fontSize: sz(14), color: C.text, marginTop: sz(4) },
-  link: { color: C.blue, fontWeight: '600', fontSize: sz(13) },
-  aboutItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: sz(8), borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: C.line },
-  closeBtn: { marginTop: sz(12), paddingVertical: sz(12), alignItems: 'center', justifyContent: 'center', borderRadius: sz(14), backgroundColor: C.chip },
+  fchip: { backgroundColor: C.chip, borderRadius: sz(14), paddingHorizontal: sz(12), paddingVertical: sz(6) },
+  fchipText: { fontSize: sz(12), fontWeight: '700', color: C.text },
+  closeBtn: { marginTop: sz(10), paddingVertical: sz(12), alignItems: 'center', backgroundColor: C.chip, borderRadius: sz(14) },
   closeBtnText: { fontSize: sz(15), fontWeight: '700', color: C.text },
+  aboutItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: sz(8), borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: C.line },
+  link: { color: C.blue, fontWeight: '700', fontSize: sz(13) },
+  input: { backgroundColor: C.chip, borderRadius: sz(12), paddingHorizontal: sz(12), height: sz(42), color: C.text, fontSize: sz(14) },
 }));

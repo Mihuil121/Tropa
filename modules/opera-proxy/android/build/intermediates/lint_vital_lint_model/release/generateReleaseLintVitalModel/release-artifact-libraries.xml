@@ -3,6 +3,10 @@
       name=":@@:expo-modules-core::release"
       project=":expo-modules-core"/>
   <library
+      name="io.github.expo.pika:pika-api:1.1.0@jar"
+      jars="/home/misha/.gradle/caches/modules-2/files-2.1/io.github.expo.pika/pika-api/1.1.0/aa017c3d560203871bbbd0278b1faf3687913112/pika-api-1.1.0.jar"
+      resolved="io.github.expo.pika:pika-api:1.1.0"/>
+  <library
       name="io.github.expo:expo-modules-v2-react:0.2.5@aar"
       jars="/home/misha/.gradle/caches/9.4.1/transforms/7dd092a37b9d961cec939d3188a2c0ed/transformed/expo-modules-v2-react-0.2.5/jars/classes.jar"
       resolved="io.github.expo:expo-modules-v2-react:0.2.5"
@@ -140,6 +144,10 @@
       name="org.jetbrains.kotlin:kotlin-stdlib:2.2.10@jar"
       jars="/home/misha/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib/2.2.10/30de6faa127a4a012db8e71bf1b9c0a99b1402b2/kotlin-stdlib-2.2.10.jar"
       resolved="org.jetbrains.kotlin:kotlin-stdlib:2.2.10"/>
+  <library
+      name="org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.2.10@jar"
+      jars="/home/misha/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib-jdk7/2.2.10/18cc96ae090a71726822631e1808c7d329faab5d/kotlin-stdlib-jdk7-2.2.10.jar"
+      resolved="org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.2.10"/>
   <library
       name="org.jetbrains:annotations:23.0.0@jar"
       jars="/home/misha/.gradle/caches/modules-2/files-2.1/org.jetbrains/annotations/23.0.0/8cc20c07506ec18e0834947b84a864bfc094484e/annotations-23.0.0.jar"
@@ -673,18 +681,6 @@
       externalAnnotations="annotations.zip"
       proguardRules="proguard.txt"/>
   <library
-      name="com.squareup.okhttp3:okhttp-urlconnection:4.9.2@jar"
-      jars="/home/misha/.gradle/caches/modules-2/files-2.1/com.squareup.okhttp3/okhttp-urlconnection/4.9.2/3b9e64d3d56370bc7488ed8b336d17a8013cb336/okhttp-urlconnection-4.9.2.jar"
-      resolved="com.squareup.okhttp3:okhttp-urlconnection:4.9.2"/>
-  <library
-      name="org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.0@jar"
-      jars="/home/misha/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib-jdk8/1.8.0/ed04f49e186a116753ad70d34f0ac2925d1d8020/kotlin-stdlib-jdk8-1.8.0.jar"
-      resolved="org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.0"/>
-  <library
-      name="org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.2.10@jar"
-      jars="/home/misha/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib-jdk7/2.2.10/18cc96ae090a71726822631e1808c7d329faab5d/kotlin-stdlib-jdk7-2.2.10.jar"
-      resolved="org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.2.10"/>
-  <library
       name="org.jetbrains.kotlin:kotlin-reflect:2.2.10@jar"
       jars="/home/misha/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-reflect/2.2.10/98d0ca9819d98cb3aa5c0a25793830b6659feee2/kotlin-reflect-2.2.10.jar"
       resolved="org.jetbrains.kotlin:kotlin-reflect:2.2.10"/>
@@ -741,10 +737,6 @@
       externalAnnotations="annotations.zip"
       proguardRules="proguard.txt"/>
   <library
-      name="io.github.expo.pika:pika-api:1.1.0@jar"
-      jars="/home/misha/.gradle/caches/modules-2/files-2.1/io.github.expo.pika/pika-api/1.1.0/aa017c3d560203871bbbd0278b1faf3687913112/pika-api-1.1.0.jar"
-      resolved="io.github.expo.pika:pika-api:1.1.0"/>
-  <library
       name="androidx.interpolator:interpolator:1.0.0@aar"
       jars="/home/misha/.gradle/caches/9.4.1/transforms/1abbd0e096428ab8819ed4d5681877e8/transformed/interpolator-1.0.0/jars/classes.jar"
       resolved="androidx.interpolator:interpolator:1.0.0"
@@ -800,6 +792,10 @@
       jars="/home/misha/.gradle/caches/modules-2/files-2.1/androidx.annotation/annotation-jvm/1.9.1/b17951747e38bf3986a24431b9ba0d039958aa5f/annotation-jvm-1.9.1.jar"
       resolved="androidx.annotation:annotation-jvm:1.9.1"/>
   <library
+      name="com.squareup.okhttp3:okhttp-urlconnection:4.9.2@jar"
+      jars="/home/misha/.gradle/caches/modules-2/files-2.1/com.squareup.okhttp3/okhttp-urlconnection/4.9.2/3b9e64d3d56370bc7488ed8b336d17a8013cb336/okhttp-urlconnection-4.9.2.jar"
+      resolved="com.squareup.okhttp3:okhttp-urlconnection:4.9.2"/>
+  <library
       name="com.squareup.okhttp3:okhttp:4.9.2@jar"
       jars="/home/misha/.gradle/caches/modules-2/files-2.1/com.squareup.okhttp3/okhttp/4.9.2/5302714ee9320b64cf65ed865e5f65981ef9ba46/okhttp-4.9.2.jar"
       resolved="com.squareup.okhttp3:okhttp:4.9.2"/>
@@ -820,6 +816,10 @@
       symbolFile="R.txt"
       externalAnnotations="annotations.zip"
       proguardRules="proguard.txt"/>
+  <library
+      name="org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.0@jar"
+      jars="/home/misha/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib-jdk8/1.8.0/ed04f49e186a116753ad70d34f0ac2925d1d8020/kotlin-stdlib-jdk8-1.8.0.jar"
+      resolved="org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.0"/>
   <library
       name="com.facebook.fbjni:fbjni:0.7.0@aar"
       jars="/home/misha/.gradle/caches/9.4.1/transforms/00e9f838836fbc0e39e2c6aa6eaaebb6/transformed/fbjni-0.7.0/jars/classes.jar"

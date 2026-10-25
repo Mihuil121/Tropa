@@ -1,4 +1,6 @@
 import { requireOptionalNativeModule } from 'expo';
+export * from './logic.ts';
+export * from './operaProxyManager.ts';
 
 export type OperaProxyOptions = {
   country?: 'EU' | 'AS' | 'AM' | string;
@@ -6,6 +8,7 @@ export type OperaProxyOptions = {
   initRetries?: number;
   timeout?: string;
   apiProxyFile?: string;
+  probeHost?: string;
 };
 
 export type OperaProxyStatus = {
@@ -16,13 +19,9 @@ export type OperaProxyStatus = {
 };
 
 type OperaProxyNative = {
-  /** Поддерживается ли запуск нативного бинарника на устройстве. */
   isSupported(): boolean;
-  /** Запустить локальный прокси. */
   start(options?: OperaProxyOptions): Promise<{ port: number }>;
-  /** Остановить прокси-процесс. */
   stop(): void;
-  /** Текущее состояние прокси. */
   status(): OperaProxyStatus;
 };
 

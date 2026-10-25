@@ -12,7 +12,6 @@
     neverShrinking="true"
     highlightGradualR8Api="false">
   <lintOptions
-      abortOnError="true"
       absolutePaths="true"
       checkReleaseBuilds="true"
       explainIssues="true"/>
