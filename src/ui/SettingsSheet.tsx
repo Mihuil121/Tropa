@@ -10,7 +10,7 @@ import type { LatLon } from '../core/geo';
 import { C, ui, themed, useWide, useInsets, sz } from './theme';
 import { oldDevice } from '../device';
 import { voice } from '../voice';
-import { startOperaProxy, stopOperaProxy, subscribeOperaProxy, type OperaProxyStatus } from '../../modules/opera-proxy';
+import { subscribeOperaProxy, type OperaProxyStatus } from '../../modules/opera-proxy';
 
 type Category = 'maps' | 'view' | 'traffic' | 'sensors' | 'about';
 
@@ -139,11 +139,6 @@ export function SettingsSheet({ data, settings, onSettings, onImport, obd, adapt
                   value={!!settings.operaProxy}
                   onValueChange={(v) => {
                     onSettings({ ...settings, operaProxy: v });
-                    if (v) {
-                      startOperaProxy({ country: settings.operaCountry || 'EU' });
-                    } else {
-                      stopOperaProxy();
-                    }
                   }}
                 />
               </View>
@@ -160,9 +155,7 @@ export function SettingsSheet({ data, settings, onSettings, onImport, obd, adapt
                       <Pressable
                         key={c}
                         onPress={() => {
-                          const nextCountry = c;
-                          onSettings({ ...settings, operaCountry: nextCountry });
-                          startOperaProxy({ country: nextCountry });
+                          onSettings({ ...settings, operaCountry: c });
                         }}
                         style={[s.fchip, (settings.operaCountry || 'EU') === c && { backgroundColor: C.blue }]}
                       >

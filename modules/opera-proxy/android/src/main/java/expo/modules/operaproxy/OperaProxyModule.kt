@@ -13,6 +13,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.Executors
 import java.util.LinkedList
+import java.util.concurrent.atomic.AtomicInteger
 
 class OperaProxyModule : Module() {
   private val context: Context
@@ -23,12 +24,16 @@ class OperaProxyModule : Module() {
   @Volatile private var currentPort: Int = 0
   @Volatile private var currentCountry: String = "EU"
   @Volatile private var currentServerSelection: String = "first"
+  @Volatile private var currentInitRetries: Int = 3
   @Volatile private var currentTimeout: String = "10s"
   @Volatile private var currentApiProxyFile: String? = null
   @Volatile private var currentProbeHost: String = "overpass-api.de:443"
 
-  @Volatile private var currentState: String = "stopped" // stopped, starting, ready, failed
+  @Volatile private var currentState: String = "stopped"
   @Volatile private var lastError: String? = null
+
+  private val generationCounter = AtomicInteger(0)
+  private val pendingPromises = mutableListOf<Promise>()
 
   private val logBuffer = LinkedList<String>()
   private val executor = Executors.newCachedThreadPool()
@@ -54,37 +59,39 @@ class OperaProxyModule : Module() {
     }
 
     AsyncFunction("start") { options: Map<String, Any?>?, promise: Promise ->
+      val reqCountry = (options?.get("country") as? String)?.uppercase() ?: "EU"
+      if (reqCountry !in listOf("EU", "AS", "AM")) {
+        promise.reject("ERR_BAD_OPTIONS", "Неверный country: $reqCountry", null)
+        return@AsyncFunction
+      }
+
+      val reqServerSelection = (options?.get("serverSelection") as? String)?.lowercase() ?: "first"
+      if (reqServerSelection !in listOf("first", "random", "fastest")) {
+        promise.reject("ERR_BAD_OPTIONS", "Неверный serverSelection: $reqServerSelection", null)
+        return@AsyncFunction
+      }
+
+      val reqInitRetries = (options?.get("initRetries") as? Number)?.toInt() ?: 3
+      val reqTimeout = (options?.get("timeout") as? String) ?: "10s"
+      if (!reqTimeout.matches(Regex("^\\d+[smh]$"))) {
+        promise.reject("ERR_BAD_OPTIONS", "Неверный timeout формат: $reqTimeout", null)
+        return@AsyncFunction
+      }
+
+      val reqApiProxyFile = options?.get("apiProxyFile") as? String
+      if (!reqApiProxyFile.isNullOrBlank() && !File(reqApiProxyFile).exists()) {
+        promise.reject("ERR_BAD_OPTIONS", "Файл apiProxyFile не существует: $reqApiProxyFile", null)
+        return@AsyncFunction
+      }
+
+      val reqProbeHost = (options?.get("probeHost") as? String) ?: "overpass-api.de:443"
+
+      val gen: Int
       synchronized(lock) {
-        val reqCountry = (options?.get("country") as? String)?.uppercase() ?: "EU"
-        if (reqCountry !in listOf("EU", "AS", "AM")) {
-          promise.reject("ERR_BAD_OPTIONS", "Неверный country: $reqCountry", null)
-          return@AsyncFunction
-        }
-
-        val reqServerSelection = (options?.get("serverSelection") as? String)?.lowercase() ?: "first"
-        if (reqServerSelection !in listOf("first", "random", "fastest")) {
-          promise.reject("ERR_BAD_OPTIONS", "Неверный serverSelection: $reqServerSelection", null)
-          return@AsyncFunction
-        }
-
-        val reqTimeout = (options?.get("timeout") as? String) ?: "10s"
-        if (!reqTimeout.matches(Regex("^\\d+[smh]$"))) {
-          promise.reject("ERR_BAD_OPTIONS", "Неверный timeout формат: $reqTimeout", null)
-          return@AsyncFunction
-        }
-
-        val reqApiProxyFile = options?.get("apiProxyFile") as? String
-        if (!reqApiProxyFile.isNullOrBlank() && !File(reqApiProxyFile).exists()) {
-          promise.reject("ERR_BAD_OPTIONS", "Файл apiProxyFile не существует: $reqApiProxyFile", null)
-          return@AsyncFunction
-        }
-
-        val reqProbeHost = (options?.get("probeHost") as? String) ?: "overpass-api.de:443"
-
-        // Если уже ready и опции совпадают — возвращаем порт
         if (currentState == "ready" && isPortOpen(currentPort) &&
             currentCountry == reqCountry &&
             currentServerSelection == reqServerSelection &&
+            currentInitRetries == reqInitRetries &&
             currentTimeout == reqTimeout &&
             currentApiProxyFile == reqApiProxyFile &&
             currentProbeHost == reqProbeHost) {
@@ -92,110 +99,147 @@ class OperaProxyModule : Module() {
           return@AsyncFunction
         }
 
-        // Опции отличаются или не запущен — перезапускаем
+        if (currentState == "starting" &&
+            currentCountry == reqCountry &&
+            currentServerSelection == reqServerSelection &&
+            currentInitRetries == reqInitRetries &&
+            currentTimeout == reqTimeout &&
+            currentApiProxyFile == reqApiProxyFile &&
+            currentProbeHost == reqProbeHost) {
+          pendingPromises.add(promise)
+          return@AsyncFunction
+        }
+
+        for (p in pendingPromises) {
+          try { p.reject("ERR_CANCELLED", "Запуск отменен новым запросом", null) } catch (_: Exception) {}
+        }
+        pendingPromises.clear()
+        pendingPromises.add(promise)
+
         stopProcessLocked()
         currentState = "starting"
         lastError = null
 
         currentCountry = reqCountry
         currentServerSelection = reqServerSelection
+        currentInitRetries = reqInitRetries
         currentTimeout = reqTimeout
         currentApiProxyFile = reqApiProxyFile
         currentProbeHost = reqProbeHost
 
-        val freePort = findFreePort()
-        currentPort = freePort
+        gen = generationCounter.incrementAndGet()
+      }
 
-        executor.execute {
-          try {
-            val libFile = File(context.applicationInfo.nativeLibraryDir, "libopera_proxy.so")
-            if (!libFile.exists()) {
-              synchronized(lock) {
+      val freePort = findFreePort()
+      synchronized(lock) {
+        if (generationCounter.get() != gen) return@AsyncFunction
+        currentPort = freePort
+      }
+
+      executor.execute {
+        try {
+          val libFile = File(context.applicationInfo.nativeLibraryDir, "libopera_proxy.so")
+          if (!libFile.exists()) {
+            synchronized(lock) {
+              if (generationCounter.get() == gen) {
                 currentState = "failed"
                 lastError = "libopera_proxy.so не найден"
+                rejectAllPending("ERR_NOT_SUPPORTED", lastError)
               }
-              promise.reject("ERR_NOT_SUPPORTED", lastError, null)
+            }
+            return@execute
+          }
+
+          val cmd = mutableListOf(
+            libFile.absolutePath,
+            "-bind-address", "127.0.0.1:$freePort",
+            "-country", reqCountry,
+            "-server-selection", reqServerSelection,
+            "-init-retries", reqInitRetries.toString(),
+            "-timeout", reqTimeout
+          )
+          if (!reqApiProxyFile.isNullOrBlank()) {
+            cmd.add("-api-proxy-file")
+            cmd.add(reqApiProxyFile)
+          }
+
+          Log.d("OperaProxy", "Запуск [gen $gen]: ${cmd.joinToString(" ")}")
+          val pb = ProcessBuilder(cmd)
+          pb.directory(context.filesDir)
+          val proc = pb.start()
+
+          synchronized(lock) {
+            if (generationCounter.get() != gen) {
+              try { proc.destroyForcibly() } catch (_: Exception) {}
+              return@execute
+            }
+            process = proc
+          }
+
+          // Чтение stdout
+          executor.execute {
+            try {
+              val reader = BufferedReader(InputStreamReader(proc.inputStream))
+              var line: String?
+              while (reader.readLine().also { line = it } != null) {
+                val masked = maskSensitive(line ?: "")
+                addLogLine(masked)
+              }
+            } catch (_: Exception) {}
+          }
+
+          // Чтение stderr
+          executor.execute {
+            try {
+              val reader = BufferedReader(InputStreamReader(proc.errorStream))
+              var line: String?
+              while (reader.readLine().also { line = it } != null) {
+                val masked = maskSensitive(line ?: "")
+                addLogLine(masked)
+              }
+            } catch (_: Exception) {}
+          }
+
+          val startTime = System.currentTimeMillis()
+          var ready = false
+          while (System.currentTimeMillis() - startTime < 25000) {
+            if (generationCounter.get() != gen) {
+              try { proc.destroyForcibly() } catch (_: Exception) {}
+              return@execute
+            }
+            if (!proc.isAlive) break
+            if (isProxyReady(freePort, reqProbeHost)) {
+              ready = true
+              break
+            }
+            Thread.sleep(500)
+          }
+
+          synchronized(lock) {
+            if (generationCounter.get() != gen) {
+              try { proc.destroyForcibly() } catch (_: Exception) {}
               return@execute
             }
 
-            val cmd = mutableListOf(
-              libFile.absolutePath,
-              "-bind-address", "127.0.0.1:$freePort",
-              "-country", reqCountry,
-              "-server-selection", reqServerSelection,
-              "-init-retries", "3",
-              "-timeout", reqTimeout
-            )
-            if (!reqApiProxyFile.isNullOrBlank()) {
-              cmd.add("-api-proxy-file")
-              cmd.add(reqApiProxyFile)
+            if (ready && proc.isAlive) {
+              currentState = "ready"
+              resolveAllPending(mapOf("port" to freePort))
+            } else {
+              stopProcessLocked()
+              currentState = "failed"
+              val recentLogs = synchronized(logBuffer) { logBuffer.takeLast(5).joinToString("\n") }
+              lastError = if (recentLogs.isNotBlank()) recentLogs else "Таймаут старта прокси (25 с)"
+              rejectAllPending("ERR_START_FAILED", lastError)
             }
-
-            Log.d("OperaProxy", "Запуск: ${cmd.joinToString(" ")}")
-            val pb = ProcessBuilder(cmd)
-            pb.directory(context.filesDir)
-            val proc = pb.start()
-            synchronized(lock) {
-              process = proc
-            }
-
-            // Чтение stdout
-            executor.execute {
-              try {
-                val reader = BufferedReader(InputStreamReader(proc.inputStream))
-                var line: String?
-                while (reader.readLine().also { line = it } != null) {
-                  val masked = maskSensitive(line ?: "")
-                  addLogLine(masked)
-                }
-              } catch (_: Exception) {}
-            }
-
-            // Чтение stderr
-            executor.execute {
-              try {
-                val reader = BufferedReader(InputStreamReader(proc.errorStream))
-                var line: String?
-                while (reader.readLine().also { line = it } != null) {
-                  val masked = maskSensitive(line ?: "")
-                  addLogLine(masked)
-                }
-              } catch (_: Exception) {}
-            }
-
-            // Проверка готовности (TCP порт + HTTP CONNECT к probeHost)
-            val startTime = System.currentTimeMillis()
-            var ready = false
-            while (System.currentTimeMillis() - startTime < 25000) {
-              if (!proc.isAlive) {
-                break
-              }
-              if (isProxyReady(freePort, reqProbeHost)) {
-                ready = true
-                break
-              }
-              Thread.sleep(500)
-            }
-
-            synchronized(lock) {
-              if (ready && proc.isAlive) {
-                currentState = "ready"
-                promise.resolve(mapOf("port" to freePort))
-              } else {
-                stopProcessLocked()
-                currentState = "failed"
-                val recentLogs = synchronized(logBuffer) { logBuffer.takeLast(5).joinToString("\n") }
-                lastError = if (recentLogs.isNotBlank()) recentLogs else "Таймаут старта прокси (25 с)"
-                promise.reject("ERR_START_FAILED", lastError, null)
-              }
-            }
-          } catch (e: Exception) {
-            synchronized(lock) {
+          }
+        } catch (e: Exception) {
+          synchronized(lock) {
+            if (generationCounter.get() == gen) {
               stopProcessLocked()
               currentState = "failed"
               lastError = e.message
+              rejectAllPending("ERR_START_FAILED", e.message)
             }
-            promise.reject("ERR_START_FAILED", e.message, e)
           }
         }
       }
@@ -203,6 +247,11 @@ class OperaProxyModule : Module() {
 
     Function("stop") {
       synchronized(lock) {
+        generationCounter.incrementAndGet()
+        for (p in pendingPromises) {
+          try { p.reject("ERR_CANCELLED", "Остановлено пользователем", null) } catch (_: Exception) {}
+        }
+        pendingPromises.clear()
         stopProcessLocked()
         currentState = "stopped"
       }
@@ -210,9 +259,24 @@ class OperaProxyModule : Module() {
 
     OnDestroy {
       synchronized(lock) {
+        generationCounter.incrementAndGet()
         stopProcessLocked()
       }
     }
+  }
+
+  private fun resolveAllPending(res: Map<String, Any>) {
+    for (p in pendingPromises) {
+      try { p.resolve(res) } catch (_: Exception) {}
+    }
+    pendingPromises.clear()
+  }
+
+  private fun rejectAllPending(code: String, msg: String?) {
+    for (p in pendingPromises) {
+      try { p.reject(code, msg, null) } catch (_: Exception) {}
+    }
+    pendingPromises.clear()
   }
 
   private fun isSupported(): Boolean {

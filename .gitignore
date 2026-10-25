@@ -44,6 +44,7 @@ yarn-error.*
 /android
 /ios
 modules/opera-proxy/android/src/main/jniLibs/
+modules/*/android/build/
 
 # Данные областей (tools/region)
 tools/region/out/

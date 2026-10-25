@@ -52,6 +52,7 @@ import { voice } from './src/voice';
 import { fetchRoutePois, type PoiItem } from './src/poi';
 import { Chip, MapButton, MapButtonGroup } from './src/ui/components';
 import { Icon, type IconName } from './src/ui/Icon';
+import { startOperaProxy, stopOperaProxy } from './modules/opera-proxy';
 import { C, GPS_LABEL, PANEL_W, applyScreen, applyTheme, compact, shadow, themed, ui, useInsets, useWide, sz } from './src/ui/theme';
 
 type Screen = 'map' | 'search' | 'preview' | 'nav';
@@ -245,6 +246,13 @@ export default function App() {
 
   const [recent, setRecent] = useState<RecentPlace[]>([]);
   useEffect(() => { loadRecent().then(setRecent); }, []);
+  useEffect(() => {
+    if (settings.operaProxy) {
+      startOperaProxy({ country: settings.operaCountry || 'EU' });
+    } else {
+      stopOperaProxy();
+    }
+  }, [settings.operaProxy, settings.operaCountry]);
 
   // ---------- Загрузка сохранённого ----------
   async function reloadData(resume = false) {

@@ -251,13 +251,5 @@ test('fuel: findFuelWith при ошибке сети и наличии/отсу
   }, c), (e: any) => e.name === 'AbortError');
 });
 
-test('opera-proxy: проверка аргументов и состояния модуля', async () => {
-  const options = { country: 'EU', serverSelection: 'first', initRetries: 3, timeout: '10s' };
-  assert.equal(options.country, 'EU');
-  assert.equal(options.serverSelection, 'first');
-  assert.equal(options.initRetries, 3);
-  assert.equal(options.timeout, '10s');
-});
-
 
 

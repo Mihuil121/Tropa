@@ -111,7 +111,7 @@ echo -e "\n=== 6. Сборка APK (через прокси) ==="
 cd "$PROJ/android"
 ./gradlew assembleRelease --no-daemon \
   "-Dorg.gradle.jvmargs=-Xmx3g -Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=18080 -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=18080" \
-  "-Dorg.gradle.workers.max=2" -PreactNativeArchitectures=arm64-v8a
+  "-Dorg.gradle.workers.max=2" -PreactNativeArchitectures=arm64-v8a,armeabi-v7a
 
 APK_PATH=$(find "$PROJ/android/app/build/outputs/apk/release" -name "*.apk" | head -1)
 DESKTOP_DIR="$HOME/Desktop"
