@@ -181,7 +181,7 @@ export default function App() {
     type: 'FeatureCollection',
     features: !fuelOn ? [] : fuelList.filter((st) => matchesFuel(st, fuelFilter)).map((st) => {
       const v = statusOf(fuelReports, st.id);
-      return { type: 'Feature', properties: { name: st.name, c: v === 'yes' ? '#2f9e44' : v === 'no' ? '#e03131' : '#868e96' }, geometry: { type: 'Point', coordinates: [st.lon, st.lat] } } as GeoJSON.Feature;
+      return { type: 'Feature', properties: { name: st.name, c: v === 'no' ? '#e03131' : '#2f9e44' }, geometry: { type: 'Point', coordinates: [st.lon, st.lat] } } as GeoJSON.Feature;
     }),
   }), [fuelOn, fuelList, fuelFilter, fuelReports]);
   const routePts = screen === 'preview' ? (typeof plans[mode] === 'object' ? (plans[mode] as PlannedRoute).points : null) : screen === 'nav' ? plan?.points ?? null : null;
@@ -1164,10 +1164,9 @@ export default function App() {
             <Icon name="magnify" size={24} color={C.sub} style={{ marginRight: 10 }} />
             <Text style={s.searchText}>Куда поедем?</Text>
           </Pressable>
-          <FuelChips on={fuelOn} busy={fuelBusy} onPress={toggleFuel} top={top + sz(60)} wide={wide} />
-          {data?.plan && (
+          {data?.plan && !fuelOn && (
             <Pressable
-              style={[ui.card, s.savedPlanBanner, { top: top + sz(108) }, wide && { right: undefined, width: PANEL_W }]}
+              style={[ui.card, s.savedPlanBanner, { top: top + sz(62) }, wide && { right: undefined, width: PANEL_W }]}
               onPress={() => {
                 setPlan(data.plan);
                 engine.setRoute(data.plan!.points, data.plan!.maneuvers);
@@ -1188,21 +1187,25 @@ export default function App() {
               </View>
             </Pressable>
           )}
-          <View style={[ui.card, s.status, { bottom }, wide && { right: undefined, width: PANEL_W }]}>
-            <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-              <GpsStatusIndicator nav={nav} />
-              <View style={{ flex: 1, marginLeft: 10 }}>
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: -6 }}>
-                  <Chip text={nav?.context ?? 'Датчики…'} color={C.blue} />
-                  {nav?.ready && <Chip text={`±${Math.round(nav.sigma)} м`} color={nav.gps === 'ok' ? C.green : C.amber} />}
+          {!fuelOn && (
+            <>
+              <View style={[ui.card, s.status, { bottom }, wide && { right: undefined, width: PANEL_W }]}>
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+                  <GpsStatusIndicator nav={nav} />
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: -6 }}>
+                      <Chip text={nav?.context ?? 'Датчики…'} color={C.blue} />
+                      {nav?.ready && <Chip text={`±${Math.round(nav.sigma)} м`} color={nav.gps === 'ok' ? C.green : C.amber} />}
+                    </View>
+                    {!compact && <Text style={[ui.sub, { marginTop: 6 }]}>Зажмите карту — маршрут в эту точку</Text>}
+                  </View>
                 </View>
-                {!compact && <Text style={[ui.sub, { marginTop: 6 }]}>Зажмите карту — маршрут в эту точку</Text>}
               </View>
-            </View>
-          </View>
-          <SpeedOverlay nav={nav} limit={curLimit} top={top + sz(data?.plan ? 178 : 112)} />
-          <WeatherChip now={wxNow} style={{ position: 'absolute', left: sz(12), bottom: bottom + sz(compact ? 92 : 108) }}
-            onPress={() => wxNow && setToast(`Сейчас ${wxNow.temp > 0 ? '+' : ''}${Math.round(wxNow.temp)}°, ${wxNow.text}, ветер ${Math.round(wxNow.wind)} м/с`)} />
+              <SpeedOverlay nav={nav} limit={curLimit} top={top + sz(data?.plan ? 132 : 66)} />
+              <WeatherChip now={wxNow} style={{ position: 'absolute', left: sz(12), bottom: bottom + sz(compact ? 92 : 108) }}
+                onPress={() => wxNow && setToast(`Сейчас ${wxNow.temp > 0 ? '+' : ''}${Math.round(wxNow.temp)}°, ${wxNow.text}, ветер ${Math.round(wxNow.wind)} м/с`)} />
+            </>
+          )}
         </>
       )}
 
@@ -1211,7 +1214,7 @@ export default function App() {
         <View style={[s.side, { bottom: bottom + sz(compact ? 100 : 118) }, screen === 'nav' && { bottom: sz(230) }]}>
           <MapButtonGroup items={[
             ...(Math.abs(mapBearing) > 5 ? [{ icon: 'compass-outline' as IconName, active: true, onPress: () => { setMapBearing(0); setFollow(true); setToast('Карта ориентирована на север'); } }] : []),
-            ...(screen === 'nav' ? [{ icon: 'gas-station' as IconName, active: fuelOn, onPress: toggleFuel }] : []),
+            { icon: 'gas-station' as IconName, active: fuelOn, onPress: toggleFuel },
             { icon: 'cog-outline', onPress: () => setSheet('settings') },
             { icon: view3d ? 'video-3d' : 'video-2d', active: view3d, onPress: () => { updateSettings({ ...settings, view3d: !view3d }); setFollow(true); } },
             { icon: 'traffic-light-outline', active: showTraffic, onPress: () => {

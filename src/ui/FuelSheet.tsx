@@ -9,9 +9,8 @@ import { C, ui, themed, useWide, sz } from './theme';
 const KINDS: FuelKind[] = ['92', '95', '98', '100', 'diesel', 'lpg'];
 
 function statusView(st: FuelStatus): { text: string; color: string } {
-  if (st === 'yes') return { text: 'Есть топливо', color: C.green };
   if (st === 'no') return { text: 'Нет топлива', color: C.red };
-  return { text: 'Нет данных', color: C.hint };
+  return { text: 'Есть топливо', color: C.green };
 }
 
 export function FuelSheet({ stations, reports, filter, onFilter, busy, note, onRefresh, onClose, onRoute, onAddStop, onMark }: {
