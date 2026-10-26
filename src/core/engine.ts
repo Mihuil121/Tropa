@@ -694,26 +694,23 @@ export class NavEngine {
     }
 
     const reason = this.integrityCheck(f, xy, acc);
-    this.prevGps = { ...f, xy };
 
     if (!this.ekf.initialized) {
-      if (reason) { this.markBad('spoofed', reason); return; }
+      if (reason) { this.markBad('spoofed', `GPS подменён — позиция по датчикам (${reason})`); return; }
       const hasBearing = f.bearing != null && (f.speed ?? 0) > 3;
       this.ekf.init(xy.x, xy.y, acc ** 2, hasBearing ? toRad(f.bearing!) : 0,
         hasBearing ? toRad(20) ** 2 : Math.PI ** 2, f.speed ?? this.lastObdMs, 4);
       this.goodRun = 1;
       this.setStatus('ok', '');
+      this.lastGoodGpsT = f.t;
+      this.prevGps = { ...f, xy };
       return;
     }
 
     if (reason) {
-      const netOrSensorConflict = reason.includes('км от вышек') || reason.includes('телефон стоит') || reason.includes('сигнал:');
-      this.markBad('spoofed', reason);
-
-      // Перезапуск разрешён ТОЛЬКО если нет конфликта с сетью/вышеками/датчиками
-      if (!netOrSensorConflict && acc <= 35 && this.signalHint !== 'spoof') {
-        const fastReinit = (this.coherentRun >= 5 || this.ekf.posSigma > acc * 2);
-        if (this.coherentRun >= 20 || fastReinit) this.reinitFromGps(f, xy, acc);
+      this.markBad('spoofed', `GPS подменён — позиция по датчикам (${reason})`);
+      if (acc <= 35 && this.signalHint !== 'spoof') {
+        this.reinitFromGps(f, xy, acc);
       }
       return;
     }
@@ -725,6 +722,7 @@ export class NavEngine {
     if (this.goodRun < needed) { this.setStatus('checking', `проверка ${this.goodRun}/${needed}`); return; }
     this.setStatus('ok', '');
     this.lastGoodGpsT = f.t;
+    this.prevGps = { ...f, xy };
 
     this.ekf.update(this.ekf.posMeas(xy.x, xy.y, acc), CHI2_2DOF * 3);
     if (f.speed != null) this.ekf.update(this.ekf.speedMeas(f.speed, 0.5), CHI2_1DOF * 3);
@@ -756,14 +754,26 @@ export class NavEngine {
       }
     }
 
-    // 3. Скачок: перемещение между точками против разумной скорости
-    if (this.prevGps) {
+    // 3. Скачок: сравнивай не с prevGps при dt<10, а с последней ХОРОШЕЙ позицией (lastGoodGpsT и позиция фильтра)
+    if (this.ekf.initialized && this.lastGoodGpsT > 0) {
+      const dtGood = t - this.lastGoodGpsT;
+      if (dtGood > 0) {
+        const dGood = dist(xy, { x: this.ekf.x[IX], y: this.ekf.x[IY] });
+        const maxAllowed = 60 * dtGood + 3 * this.ekf.posSigma + 200;
+        if (dGood > maxAllowed) {
+          reason ||= `скачок ${Math.round(dGood)} м за ${dtGood.toFixed(1)} с`;
+          coherent = false;
+        }
+      }
+    } else if (this.prevGps) {
       const dt = t - this.prevGps.t;
-      if (dt > 0 && dt < 10) {
-        const vJump = dist(xy, this.prevGps.xy) / dt;
-        const vRef = obdFresh ? this.lastObdMs : (f.speed ?? vJump);
-        if (vJump > 70) reason ||= `скачок ${Math.round(dist(xy, this.prevGps.xy))} м за ${dt.toFixed(1)} с`;
-        if (Math.abs(vJump - vRef) > Math.max(5, 0.3 * vRef)) coherent = false;
+      if (dt > 0) {
+        const dJump = dist(xy, this.prevGps.xy);
+        const maxAllowed = 60 * dt + 200;
+        if (dJump > maxAllowed) {
+          reason ||= `скачок ${Math.round(dJump)} м за ${dt.toFixed(1)} с`;
+          coherent = false;
+        }
       }
     }
 
@@ -786,7 +796,28 @@ export class NavEngine {
     return reason;
   }
 
+  private canReinitFromGps(f: GpsFix, xy: XY, acc: number): boolean {
+    const t = f.t;
+    if (this.stopped || this.ctx.movement === 'still') return false;
+    if (this.stillSince !== null && t - this.stillSince < 20) return false;
+    if (this.coherentRun < 20) return false;
+
+    let distOk = false;
+    if (this.ekf.initialized && this.lastGoodGpsT > 0) {
+      const dtGood = t - this.lastGoodGpsT;
+      const dGood = dist(xy, { x: this.ekf.x[IX], y: this.ekf.x[IY] });
+      const maxAllowed = 60 * (dtGood > 0 ? dtGood : 1) + 3 * this.ekf.posSigma + 200;
+      distOk = dGood <= maxAllowed;
+    }
+
+    const netLoc = this.lastCoarse ?? (this.lastCell ? { lat: this.lastCell.lat, lon: this.lastCell.lon, accuracy: this.lastCell.accuracy, t: this.lastCell.t } : null);
+    const hasNetConfirm = !!(netLoc && t - netLoc.t < 300 && this.frame && dist(xy, this.frame.toXY({ lat: netLoc.lat, lon: netLoc.lon })) <= 3000);
+
+    return distOk || hasNetConfirm;
+  }
+
   private reinitFromGps(f: GpsFix, xy: XY, acc: number) {
+    if (!this.canReinitFromGps(f, xy, acc)) return;
     const keep = { b: this.ekf.x[IB], s: this.ekf.x[IS] };
     const th = f.bearing != null && (f.speed ?? 0) > 3 ? toRad(f.bearing) : this.ekf.x[ITH];
     this.ekf.init(xy.x, xy.y, acc ** 2, th, toRad(20) ** 2, f.speed ?? this.ekf.x[IV], 4);

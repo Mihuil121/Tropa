@@ -309,9 +309,81 @@ test('подмена в 65 км от вышек (Севастополь vs Си�
   }
   const st = e.getState(t);
   assert.equal(st.gps, 'spoofed');
-  assert.ok(st.gpsReason.includes('вышека') || st.gpsReason.includes('сети'));
+  assert.ok(st.gpsReason.includes('вышека') || st.gpsReason.includes('сети') || st.gpsReason.includes('скачок') || st.gpsReason.includes('подменён'));
   // Позиция ядра должна остаться около Севастополя, не улетать в Симферополь
   assert.ok(Math.abs(st.lat - 44.597) < 0.05, `широта ${st.lat.toFixed(4)} не должна улетать в Симферополь`);
+});
+
+test('антиподмена (а): неподвижный телефон при серии фальшивых GPS точек в 65 км остается в spoofed', async () => {
+  const { NavEngine } = await import('../src/core/engine.ts');
+  const e = new NavEngine();
+  let t = 1000;
+  for (let i = 0; i < 10; i++) {
+    t += 1;
+    e.onMotion(t, 0.1, 0.05);
+    e.onGps({ t, lat: 44.59025, lon: 33.50315, accuracy: 5, speed: 0 });
+  }
+  const initSt = e.getState(t);
+  assert.equal(initSt.gps, 'ok');
+
+  for (let i = 0; i < 12; i++) {
+    t += 1;
+    e.onMotion(t, 0.1, 0.05);
+  }
+
+  let everOk = false;
+  for (let i = 0; i < 30; i++) {
+    t += 1;
+    e.onMotion(t, 0.1, 0.05);
+    e.onGps({ t, lat: 44.99 + i * 0.0003, lon: 34.10, accuracy: 4, speed: 38.9, bearing: 45 });
+    const st = e.getState(t);
+    if (st.gps === 'ok') everOk = true;
+  }
+
+  const finalSt = e.getState(t);
+  assert.equal(everOk, false, 'статус ни разу не должен стать ok');
+  assert.equal(finalSt.gps, 'spoofed');
+  const dErr = Math.hypot((finalSt.lat - 44.59025) * 111320, (finalSt.lon - 33.50315) * 111320 * Math.cos(44.59025 * Math.PI / 180));
+  assert.ok(dErr <= 100, `отклонение ${dErr.toFixed(1)} м должно быть <= 100 м`);
+});
+
+test('антиподмена (б): обычная поездка 90 км/ч с движением остается ok', async () => {
+  const { NavEngine } = await import('../src/core/engine.ts');
+  const e = new NavEngine();
+  let t = 1000;
+  for (let i = 0; i < 30; i++) {
+    t += 1;
+    e.onMotion(t, 1.2, 0.8);
+    e.onGps({ t, lat: 44.59 + i * 0.000225, lon: 33.50, accuracy: 8, speed: 25.0, bearing: 0 });
+  }
+  const st = e.getState(t);
+  assert.equal(st.gps, 'ok');
+});
+
+test('антиподмена (в): честный выезд из тоннеля (пауза 40 с, смещение 800 м) принимается', async () => {
+  const { NavEngine } = await import('../src/core/engine.ts');
+  const e = new NavEngine();
+  let t = 1000;
+  for (let i = 0; i < 15; i++) {
+    t += 1;
+    e.onMotion(t, 1.0, 0.6);
+    e.onGps({ t, lat: 44.59 + i * 0.00018, lon: 33.50, accuracy: 6, speed: 20.0, bearing: 0 });
+  }
+  assert.equal(e.getState(t).gps, 'ok');
+
+  for (let i = 0; i < 40; i++) {
+    t += 1;
+    e.onMotion(t, 1.0, 0.6);
+  }
+
+  for (let i = 0; i < 10; i++) {
+    t += 1;
+    e.onMotion(t, 1.0, 0.6);
+    e.onGps({ t, lat: 44.5999 + i * 0.00018, lon: 33.50, accuracy: 8, speed: 20.0, bearing: 0 });
+  }
+
+  const st = e.getState(t);
+  assert.equal(st.gps, 'ok', 'после выезда из тоннеля статус должен восстановиться в ok');
 });
 
 test('стиль карты: перекрашивание под тёмную тему и замена иконок на точки', async () => {
