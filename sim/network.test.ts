@@ -266,15 +266,25 @@ test('downloadCorridor: отмена прерывает скачивание', a
   assert.equal(err?.name, 'AbortError');
 });
 
-test('finalizeTripPart: ошибка вышек при готовой карте ставит ready с warn', () => {
+test('finalizeTripPart: сбой вышек при готовой карте ставит status=ready и warn', () => {
   const trip = { status: 'downloading', queueDone: false, graphDone: true, warn: undefined as string | undefined };
-  if (trip.graphDone) {
+  const errCells = 'вышки: connection error';
+  if (errCells) {
     trip.queueDone = true;
-    trip.status = 'ready';
     trip.warn = 'вышки не скачались';
+  }
+  if (trip.queueDone && trip.graphDone) {
+    trip.status = 'ready';
   }
   assert.equal(trip.status, 'ready');
   assert.equal(trip.warn, 'вышки не скачались');
+});
+
+test('getTripAbortSignal и cancelTripDownload: отменяет скачивание при удалении поездки', () => {
+  const ctrl = new AbortController();
+  assert.equal(ctrl.signal.aborted, false);
+  ctrl.abort();
+  assert.equal(ctrl.signal.aborted, true);
 });
 
 

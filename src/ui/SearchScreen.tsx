@@ -13,10 +13,10 @@ import { AnimatedIcon } from './AnimatedIcon';
 import { getLite } from './liteFlag';
 import { abortListening, startListening, stopListening } from '../stt';
 
-export function SearchScreen({ near, trips, recent, onPick, onClose, onOpenTrip, onDeleteTrip, onDeleteRecent, onClearRecent, onToast, onFuelCommand }: {
+export function SearchScreen({ near, trips, recent, onPick, onClose, onOpenTrip, onDeleteTrip, onRetryTrip, onDeleteRecent, onClearRecent, onToast, onFuelCommand }: {
   near?: LatLon; trips: Trip[]; recent: RecentPlace[];
   onPick: (p: Place) => void; onClose: () => void;
-  onOpenTrip: (t: Trip) => void; onDeleteTrip: (t: Trip) => void;
+  onOpenTrip: (t: Trip) => void; onDeleteTrip: (t: Trip) => void; onRetryTrip?: (t: Trip) => void;
   onDeleteRecent: (p: RecentPlace) => void; onClearRecent: () => void;
   onToast: (s: string) => void; onFuelCommand: () => void;
 }) {
@@ -46,7 +46,7 @@ export function SearchScreen({ near, trips, recent, onPick, onClose, onOpenTrip,
     setListening(true);
     startListening({
       onText: (t, final) => {
-        setQ(t); // промежуточный текст сразу в строке, обычный поиск сработает сам
+        setQ(t);
         if (final && /бензин|заправк/i.test(t)) onFuelCommand();
       },
       onEnd: () => setListening(false),
@@ -55,7 +55,6 @@ export function SearchScreen({ near, trips, recent, onPick, onClose, onOpenTrip,
   }
 
   useEffect(() => {
-    // Пауза 450 мс после ввода: не нагружаем бесплатный сервер на каждую букву
     const t = setTimeout(async () => {
       ctrl.current?.abort();
       if (q.trim().length < 2) { setItems([]); setErr(''); return; }
@@ -80,7 +79,6 @@ export function SearchScreen({ near, trips, recent, onPick, onClose, onOpenTrip,
     ? 'Улицы, дома и заведения ищем рядом с вами, а достопримечательности, вокзалы и города — везде.\nМожно и без поиска: зажмите палец на нужной точке карты.'
     : 'Пока не знаем, где вы, поэтому ищем по всей стране. Чтобы найти улицу в другом городе, допишите город: «Ленина, Ялта».';
 
-  // Экран до ввода: скачанные поездки (зелёные) и недавние места
   const home = (
     <View>
       {trips.length > 0 && <View style={s.groupRow}><Text style={s.group}>СКАЧАННЫЕ МАРШРУТЫ</Text></View>}
@@ -96,11 +94,18 @@ export function SearchScreen({ near, trips, recent, onPick, onClose, onOpenTrip,
               : <Icon name={icon} size={26} color={bad ? C.red : C.green} style={{ marginRight: 12 }} />}
             <View style={{ flex: 1 }}>
               <Text style={s.name} numberOfLines={1}>{t.name}</Text>
-              <Text style={[s.detail, bad && { color: C.red }]} numberOfLines={2}>
-                {ready ? `Скачано · ${t.mb ? `${t.mb} МБ` : 'работает без интернета'}` : bad ? (t.error || 'Ошибка загрузки') : `Скачивается… ${pct}%`}
+              <Text style={[s.detail, bad && { color: C.red }, t.warn && { color: C.amber }]} numberOfLines={2}>
+                {ready ? (t.warn ? `Офлайн · ${t.warn}` : `Скачано · ${t.mb ? `${t.mb} МБ` : 'работает без интернета'}`) : bad ? (t.error || 'Ошибка загрузки') : `Скачивается… ${pct}%`}
               </Text>
               {!ready && !bad && <View style={s.track}><View style={[s.fill, { width: `${pct}%` }]} /></View>}
             </View>
+
+            {(bad || t.warn || !ready) && onRetryTrip && (
+              <Pressable hitSlop={10} style={{ padding: 6, marginRight: 4 }} onPress={() => onRetryTrip(t)}>
+                <Icon name="refresh" size={22} color={C.blue} />
+              </Pressable>
+            )}
+
             {(ready || bad) && (
               <Pressable hitSlop={10} style={{ padding: 6 }} onPress={() => onDeleteTrip(t)}>
                 <AnimatedIcon name="trash" size={28} color={C.red} autoPlay={false} />

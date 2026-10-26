@@ -11,7 +11,7 @@
 
 import type { LatLon } from './core/geo.ts';
 import type { TravelMode, PlannedRoute, Maneuver } from './online.ts';
-import { fetchText, firstOk } from './net.ts';
+import { fetchText, firstOk, hostOf } from './net.ts';
 import { dlogError } from './debugLog.ts';
 
 export type Node = { lat: number; lon: number };
@@ -26,7 +26,7 @@ export type Graph = {
 };
 
 /** Граф на диске (JSON). */
-export type StoredGraph = { v: 2; lat: number[]; lon: number[]; off: number[]; to: number[]; w: number[]; fl: number[]; cls: number[] };
+export type StoredGraph = { v: 2; lat: number[]; lon: number[]; off: number[]; to: number[]; w: number[]; fl: number[]; cls: number[]; partial?: boolean };
 
 const CAR = 1, FOOT = 2;
 const R = 6371000;
@@ -298,6 +298,8 @@ export async function downloadCorridor(pts: LatLon[], opts: { signal?: AbortSign
   const batches: BBox[][] = [];
   for (let i = 0; i < boxes.length; i += 12) batches.push(boxes.slice(i, i + 12));
   const responses: { elements?: any[] }[] = [];
+  const batchErrors: string[] = [];
+
   for (let b = 0; b < batches.length; b++) {
     const parts = batches[b].map(([s, w, n, e]) => `way["highway"]["access"!~"^(private|no)$"](${s.toFixed(5)},${w.toFixed(5)},${n.toFixed(5)},${e.toFixed(5)});`).join('');
     const q = `[out:json][timeout:90];(${parts});out body;>;out skel qt;`;
@@ -309,17 +311,33 @@ export async function downloadCorridor(pts: LatLon[], opts: { signal?: AbortSign
             method: 'POST', body: `data=${encodeURIComponent(q)}`,
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal: sig, timeoutMs: 100_000,
           });
-          if (!r.ok) throw new Error(`overpass ${r.status}`);
+          if (!r.ok) {
+            const snippet = (r.text || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+            throw new Error(`${hostOf(url)} ${r.status}${snippet ? `: ${snippet}` : ''}`);
+          }
           return JSON.parse(r.text);
         },
       })), { signal: opts.signal, staggerMs: 15_000, budgetMs: 150_000 });
       if (j) responses.push(j);
     } catch (e: any) {
+      if (opts.signal?.aborted || e?.name === 'AbortError') throw e;
+      const msg = String(e?.message ?? e);
+      batchErrors.push(`батч ${b + 1}: ${msg}`);
       dlogError(`overpass батч ${b + 1}/${batches.length} пропущен из-за ошибки`, e);
     }
     opts.onProgress?.(((b + 1) / batches.length) * 100);
   }
-  return buildGraph(responses);
+
+  const graph = buildGraph(responses);
+  if (graph.lat.length === 0) {
+    const errReason = batchErrors.join('; ') || 'Overpass не вернул данных';
+    throw new Error(`дороги не скачались: ${errReason}`);
+  }
+
+  if (batchErrors.length > 0) {
+    graph.partial = true;
+  }
+  return graph;
 }
 
 /** Совместимость: прямоугольник (юг, запад, север, восток). */

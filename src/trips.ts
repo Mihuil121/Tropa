@@ -31,6 +31,7 @@ export type Trip = {
   queueDone?: boolean;
   graphDone?: boolean;
   error?: string;
+  warn?: string;
 };
 
 const tropaDir = new Directory(Paths.document, 'tropa');
@@ -198,23 +199,45 @@ export async function updateTrip(id: string, update: Omit<Partial<Trip>, 'progre
   scheduleFlush();
 }
 
-/** Завершение частей скачивания (очередь/граф). Ставит ready только при завершении обеих частей. */
-export async function finalizeTripPart(id: string, part: 'queue' | 'graph', err?: string, mb?: number): Promise<void> {
-  if (err) {
-    await deleteTrip(id);
-    return;
+const tripAbortControllers = new Map<string, AbortController>();
+
+export function getTripAbortSignal(id: string): AbortSignal {
+  let ctrl = tripAbortControllers.get(id);
+  if (!ctrl || ctrl.signal.aborted) {
+    ctrl = new AbortController();
+    tripAbortControllers.set(id, ctrl);
   }
+  return ctrl.signal;
+}
+
+export function cancelTripDownload(id: string) {
+  const ctrl = tripAbortControllers.get(id);
+  if (ctrl) {
+    ctrl.abort();
+    tripAbortControllers.delete(id);
+  }
+}
+
+/** Завершение частей скачивания (очередь/граф). Ставит ready только при завершении обеих частей. */
+export async function finalizeTripPart(id: string, part: 'queue' | 'graph', err?: string, mb?: number, warn?: string): Promise<void> {
   const list = await listTrips();
   const idx = list.findIndex((t) => t.id === id);
-  if (idx < 0) return;
+  if (idx < 0) return; // Поездка удалена во время скачивания — ничего не пишем
   const next: Trip = { ...list[idx] };
   if (mb != null && mb > 0) next.mb = mb;
-  if (part === 'queue') next.queueDone = true; else next.graphDone = true;
-  if (next.queueDone && next.graphDone) {
-    next.status = 'ready';
-    next.error = undefined;
-    next.totalPct = 100;
-    next.progress = { map: 100, cells: 100, graph: 100 };
+  if (warn) next.warn = warn;
+
+  if (err) {
+    next.status = 'error';
+    next.error = err;
+  } else {
+    if (part === 'queue') next.queueDone = true; else next.graphDone = true;
+    if (next.queueDone && next.graphDone && next.status !== 'error') {
+      next.status = 'ready';
+      next.error = undefined;
+      next.totalPct = 100;
+      next.progress = { map: 100, cells: 100, graph: 100 };
+    }
   }
   list[idx] = next;
   notifyTrips();
@@ -254,6 +277,10 @@ export async function getTripGraph(id: string): Promise<Graph | null> {
 }
 
 export async function saveTripGraph(id: string, graph: StoredGraph): Promise<void> {
+  // Перед записью проверяем, что поездка ещё существует в индексе!
+  const list = await listTrips();
+  if (!list.some((t) => t.id === id)) return;
+
   ensureDirs();
   const td = new Directory(tripsDir, id);
   if (!td.exists) td.create({ intermediates: true });
@@ -309,6 +336,7 @@ export async function getOfflineGraphForCoords(from?: { lat: number; lon: number
 
 /** Удаление папки поездки и записи из индекса. Принимает опциональный колбэк для удаления карт MapLibre. */
 export async function deleteTrip(id: string, deleteMapsCb?: (id: string) => Promise<void>): Promise<void> {
+  cancelTripDownload(id);
   ensureDirs();
   if (deleteMapsCb) {
     try { await deleteMapsCb(id); } catch (e) { dlogError('deleteMapsCb', e); }

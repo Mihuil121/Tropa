@@ -18,10 +18,10 @@ import { C, ui, themed, useWide, PANEL_W, sz } from './theme';
 
 type Item = { key: string; name: string; detail: string; plan: AreaPlan };
 
-export function MapDownloads({ near, route, routeName, usingFileMap, onClose, areaCells, cellsTotal, showCells, onShowCells, trips, onDeleteTrip }: {
+export function MapDownloads({ near, route, routeName, usingFileMap, onClose, areaCells, cellsTotal, showCells, onShowCells, trips, onDeleteTrip, onRetryTrip }: {
   near?: LatLon; route: LatLon[] | null; routeName?: string; usingFileMap: boolean; onClose: () => void;
   areaCells: Record<string, number>; cellsTotal: number; showCells: boolean; onShowCells: (v: boolean) => void;
-  trips: Trip[]; onDeleteTrip: (t: Trip) => void;
+  trips: Trip[]; onDeleteTrip: (t: Trip) => void; onRetryTrip?: (t: Trip) => void;
 }) {
   const { wide } = useWide();
   const [areas, setAreas] = useState<PackInfo[]>([]);
@@ -169,27 +169,36 @@ export function MapDownloads({ near, route, routeName, usingFileMap, onClose, ar
 
         <Text style={[ui.sub, s.p]}>Занято картами на телефоне: {totalMb} МБ</Text>
         {trips.length > 0 && <Text style={s.group}>ПОЕЗДКИ</Text>}
-        {trips.map((t) => (
-          <View key={t.id} style={s.row}>
-            {t.status === 'queued' || t.status === 'downloading' ? (
-              <AnimatedIcon name="loading" size={30} color={C.blue} loop style={{ marginRight: 12 }} />
-            ) : (
-              <Icon name={t.status === 'ready' ? 'check-circle' : 'alert-circle-outline'} size={26}
-                color={t.status === 'error' ? C.red : t.status === 'ready' ? C.green : C.blue} style={{ marginRight: 12 }} />
-            )}
-            <View style={{ flex: 1 }}>
-              <Text style={s.name} numberOfLines={1}>{t.name}</Text>
-              <Text style={s.detail} numberOfLines={2}>
-                {t.status === 'ready' ? `скачано · ${t.mb} МБ` : t.status === 'error' ? (t.error || 'ошибка загрузки') : `скачивается · ${Math.floor(t.totalPct)}%`}
-              </Text>
+        {trips.map((t) => {
+          const ready = t.status === 'ready';
+          const bad = t.status === 'error';
+          return (
+            <View key={t.id} style={s.row}>
+              {t.status === 'queued' || t.status === 'downloading' ? (
+                <AnimatedIcon name="loading" size={30} color={C.blue} loop style={{ marginRight: 12 }} />
+              ) : (
+                <Icon name={ready ? 'check-circle' : 'alert-circle-outline'} size={26}
+                  color={bad ? C.red : ready ? C.green : C.blue} style={{ marginRight: 12 }} />
+              )}
+              <View style={{ flex: 1 }}>
+                <Text style={s.name} numberOfLines={1}>{t.name}</Text>
+                <Text style={[s.detail, bad && { color: C.red }, t.warn && { color: C.amber }]} numberOfLines={2}>
+                  {ready ? (t.warn ? `скачано · ${t.warn}` : `скачано · ${t.mb ? `${t.mb} МБ` : 'готов'}`) : bad ? (t.error || 'ошибка загрузки') : `скачивается · ${Math.floor(t.totalPct)}%`}
+                </Text>
+              </View>
+              {(bad || t.warn || !ready) && onRetryTrip && (
+                <Pressable hitSlop={10} style={{ padding: 6, marginRight: 4 }} onPress={() => onRetryTrip(t)}>
+                  <Icon name="refresh" size={22} color={C.blue} />
+                </Pressable>
+              )}
+              {(ready || bad) && (
+                <Pressable hitSlop={10} style={{ padding: 6 }} onPress={() => onDeleteTrip(t)}>
+                  <Icon name="delete-outline" size={24} color={C.red} />
+                </Pressable>
+              )}
             </View>
-            {(t.status === 'ready' || t.status === 'error') && (
-              <Pressable hitSlop={10} style={{ padding: 6 }} onPress={() => onDeleteTrip(t)}>
-                <Icon name="delete-outline" size={24} color={C.red} />
-              </Pressable>
-            )}
-          </View>
-        ))}
+          );
+        })}
 
         {extra.length > 0 && <Text style={s.group}>УЖЕ СКАЧАНО</Text>}
         {extra.map((a) => (

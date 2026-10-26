@@ -11,7 +11,7 @@ import { Camera, GeoJSONSource, Images, Layer, Map, RasterSource } from '@maplib
 import { useNavigation } from './src/useNavigation';
 import { clearLearned, clearPlan, importFile, loadAll, loadSettings, savePlan, saveSettings, type Kind, type Loaded, type Settings } from './src/data';
 import { downloadCorridor } from './src/offlineRouter';
-import { deleteTrip, finalizeTripPart, getTripRoute, listTrips, saveTrip, saveTripGraph, saveTripRoute, subscribeTrips, updateTrip, type BBox, type Trip } from './src/trips';
+import { deleteTrip, finalizeTripPart, getTripAbortSignal, getTripRoute, listTrips, saveTrip, saveTripGraph, saveTripRoute, subscribeTrips, updateTrip, type BBox, type Trip } from './src/trips';
 import { addRecent, clearRecent, loadRecent, removeRecent, type RecentPlace } from './src/recent';
 import { findFuel, loadReports, matchesFuel, displayStatus, setReport, statusOf, type FuelKind, type FuelReports, type FuelStation } from './src/fuel';
 import { FuelSheet } from './src/ui/FuelSheet';
@@ -904,6 +904,55 @@ export default function App() {
     setToast(`Маршрут «${routeName}» сохранён и качается в фоне!`);
   }
 
+  async function retryTripDownload(trip: Trip) {
+    setToast(`Повторяем скачивание для «${trip.name}»…`);
+    const route = await getTripRoute(trip.id);
+    if (!route) {
+      setToast('Ошибка: исходный маршрут не найден');
+      return;
+    }
+
+    const ctrlSignal = getTripAbortSignal(trip.id);
+
+    if (!trip.graphDone) {
+      try {
+        updateTrip(trip.id, { status: 'downloading', error: undefined });
+        const graph = await downloadCorridor(route.points, {
+          signal: ctrlSignal,
+          onProgress: (pct) => updateTrip(trip.id, { progress: { graph: Math.round(pct) } }),
+        });
+        const exists = (await listTrips()).some((t) => t.id === trip.id);
+        if (exists && !ctrlSignal.aborted) {
+          await saveTripGraph(trip.id, graph);
+          await finalizeTripPart(trip.id, 'graph', undefined, undefined, graph.partial ? 'дороги скачаны частично' : undefined);
+        }
+      } catch (e: any) {
+        dlogError('повтор графа', e);
+        if (!ctrlSignal.aborted && (await listTrips()).some((t) => t.id === trip.id)) {
+          await finalizeTripPart(trip.id, 'graph', String(e?.message ?? e));
+        }
+      }
+    }
+
+    if (!trip.queueDone || trip.warn === 'вышки не скачались') {
+      try {
+        const corridorPlan = planCorridor(trip.name, route.points, true);
+        corridorPlan.tripId = trip.id;
+        corridorPlan.forceCells = true;
+        const { records, count } = await downloadCells(corridorPlan.cellBoxes ?? [], () => {});
+        if (count > 0) {
+          await mergeCells(records);
+          await updateTrip(trip.id, { cellsCount: count, warn: undefined });
+          await finalizeTripPart(trip.id, 'queue', undefined, trip.mb);
+        }
+      } catch (e: any) {
+        dlogError('повтор вышек', e);
+      }
+    }
+
+    await reloadData();
+  }
+
   // ---------- Автоматический пересчёт при съезде с маршрута ----------
   const reroutingRef = useRef(false);
   useEffect(() => {
@@ -1321,7 +1370,7 @@ export default function App() {
 
       {screen === 'search' && (
         <Appear key="search" from="fade"><SearchScreen near={nav?.ready ? { lat: nav.lat, lon: nav.lon } : undefined} trips={trips} recent={recent} onPick={pickDest} onClose={() => setScreen('map')}
-          onOpenTrip={openTrip} onDeleteTrip={removeTrip} onToast={setToast}
+          onOpenTrip={openTrip} onDeleteTrip={removeTrip} onRetryTrip={retryTripDownload} onToast={setToast}
           onFuelCommand={() => { setScreen('map'); if (!fuelOn) toggleFuel(); }}
           onDeleteRecent={(p) => removeRecent(p).then(setRecent)} onClearRecent={() => clearRecent().then(setRecent)} /></Appear>
       )}
@@ -1364,7 +1413,7 @@ export default function App() {
       )}
 
       {sheet === 'maps' && (
-        <Appear key="maps" from="fade"><MapDownloads near={nav?.ready ? { lat: nav.lat, lon: nav.lon } : undefined} route={data?.route ?? null} trips={trips} onDeleteTrip={removeTrip}
+        <Appear key="maps" from="fade"><MapDownloads near={nav?.ready ? { lat: nav.lat, lon: nav.lon } : undefined} route={data?.route ?? null} trips={trips} onDeleteTrip={removeTrip} onRetryTrip={retryTripDownload}
           routeName={data?.plan?.dest?.name} usingFileMap={!!data?.mapUri} onClose={() => setSheet('settings')}
           areaCells={areaCells} cellsTotal={data?.cells?.size ?? 0} showCells={showCells}
           onShowCells={(v) => { setShowCells(v); if (v) setToast(`На карте — вышки рядом с вами (${engine.cellDb?.near(nav ? { lat: nav.lat, lon: nav.lon } : { lat: 0, lon: 0 }, 40).length ?? 0})`); }} /></Appear>
