@@ -826,10 +826,17 @@ export class NavEngine {
     if (this.lastReasonKind === 'net' || this.lastReasonKind === 'sensor' || this.lastReasonKind === 'signal') return false;
     if (this.stopped || (this.ctx.movement as string) === 'still') return false;
     if (t - this.lastStillT < 20) return false;
-    if (this.coherentRun < 20) return false;
 
     const dtGood = t - this.lastGoodGpsT;
     const isLongPause = dtGood > 120;
+
+    const netLoc = this.lastCoarse ?? (this.lastCell ? { lat: this.lastCell.lat, lon: this.lastCell.lon, accuracy: this.lastCell.accuracy, t: this.lastCell.t } : null);
+    const hasNetConfirm = !!(netLoc && t - netLoc.t < 300 && this.frame && dist(xy, this.frame.toXY({ lat: netLoc.lat, lon: netLoc.lon })) <= 3000);
+
+    // Независимое сетевое подтверждение — основание для перезапуска само по себе
+    if (hasNetConfirm) return true;
+
+    if (this.coherentRun < 20) return false;
 
     let distOk = false;
     if (!isLongPause && this.ekf.initialized && this.lastGoodGpsT > 0) {
@@ -838,10 +845,7 @@ export class NavEngine {
       distOk = dGood <= maxAllowed;
     }
 
-    const netLoc = this.lastCoarse ?? (this.lastCell ? { lat: this.lastCell.lat, lon: this.lastCell.lon, accuracy: this.lastCell.accuracy, t: this.lastCell.t } : null);
-    const hasNetConfirm = !!(netLoc && t - netLoc.t < 300 && this.frame && dist(xy, this.frame.toXY({ lat: netLoc.lat, lon: netLoc.lon })) <= 3000);
-
-    return distOk || hasNetConfirm;
+    return distOk;
   }
 
   private reinitFromGps(f: GpsFix, xy: XY, acc: number) {
