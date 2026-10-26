@@ -4,10 +4,11 @@ import { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, Share, StyleSheet, Switch, Text, View, Animated } from 'react-native';
 import { getLines, subscribe } from '../debugLog';
 import { checkNetworkHosts, type HostCheckResult } from '../net';
+import type { Settings } from '../data';
 import { C, themed, sz } from './theme';
 import { Icon } from './Icon';
 
-export function DebugPanel({ onClose, jam, onJam }: { onClose: () => void; jam: boolean; onJam: (v: boolean) => void }) {
+export function DebugPanel({ onClose, jam, onJam, settings }: { onClose: () => void; jam: boolean; onJam: (v: boolean) => void; settings?: Settings }) {
   const [, setTick] = useState(0);
   const ref = useRef<any>(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -27,7 +28,7 @@ export function DebugPanel({ onClose, jam, onJam }: { onClose: () => void; jam: 
     setCheckingNet(true);
     setNetResults(null);
     try {
-      const res = await checkNetworkHosts();
+      const res = await checkNetworkHosts(settings?.dataUrl);
       setNetResults(res);
     } catch {} finally {
       setCheckingNet(false);
@@ -84,7 +85,7 @@ export function DebugPanel({ onClose, jam, onJam }: { onClose: () => void; jam: 
                   {r.name} ({r.ms} мс)
                 </Text>
                 <Text style={{ color: r.ok ? '#82c91e' : '#ff8787', fontSize: sz(11) }} numberOfLines={1}>
-                  {r.ok ? `HTTP ${r.status}` : (r.error || 'ошибка')}
+                  {r.ok ? (r.status === 400 ? 'жив, 400' : `HTTP ${r.status}`) : (r.error || 'ошибка')}
                 </Text>
               </View>
             ))}
@@ -101,6 +102,9 @@ export function DebugPanel({ onClose, jam, onJam }: { onClose: () => void; jam: 
           <Text style={s.jamSub}>
             Симулирует работу глушилки. Приложение перестанет доверять спутникам 
             и будет определять место по вышкам, Wi‑Fi и датчикам движения.
+          </Text>
+          <Text style={[s.jamSub, { marginTop: 6, fontWeight: '600', color: '#ff8787' }]}>
+            ⚠️ Не отключайте геолокацию в настройках — тогда Android блокирует все источники данных
           </Text>
         </View>
         <Switch 
@@ -235,7 +239,7 @@ const s = themed(() => ({
   },
   jam: { 
     flexDirection: 'row', 
-    alignItems: 'center',
+    alignItems: 'flex-start',
     backgroundColor: 'rgba(255,107,107,0.08)', 
     borderRadius: sz(14),
     padding: sz(12),

@@ -266,25 +266,25 @@ test('downloadCorridor: отмена прерывает скачивание', a
   assert.equal(err?.name, 'AbortError');
 });
 
-test('finalizeTripPart: сбой вышек при готовой карте ставит status=ready и warn', () => {
-  const trip = { status: 'downloading', queueDone: false, graphDone: true, warn: undefined as string | undefined };
-  const errCells = 'вышки: connection error';
-  if (errCells) {
-    trip.queueDone = true;
-    trip.warn = 'вышки не скачались';
+test('downloadCorridor: падение батчей обрабатывается', async () => {
+  const { downloadCorridor } = await import('../src/offlineRouter.ts');
+  const pts = [{ lat: 44.6, lon: 33.5 }, { lat: 44.7, lon: 33.6 }];
+  let err: any = null;
+  try {
+    await downloadCorridor(pts, { signal: AbortSignal.timeout(5) });
+  } catch (e: any) {
+    err = e;
   }
-  if (trip.queueDone && trip.graphDone) {
-    trip.status = 'ready';
-  }
-  assert.equal(trip.status, 'ready');
-  assert.equal(trip.warn, 'вышки не скачались');
+  assert.ok(err);
 });
 
-test('getTripAbortSignal и cancelTripDownload: отменяет скачивание при удалении поездки', () => {
-  const ctrl = new AbortController();
-  assert.equal(ctrl.signal.aborted, false);
-  ctrl.abort();
-  assert.equal(ctrl.signal.aborted, true);
+test('checkNetworkHosts: проверка кастомного хоста', async () => {
+  const { checkNetworkHosts } = await import('../src/net.ts');
+  const results = await checkNetworkHosts('https://invalid.host.test.local/data');
+  assert.ok(Array.isArray(results));
+  const custom = results.find(r => r.name === 'Свой сервер данных');
+  assert.ok(custom);
+  assert.equal(custom.ok, false);
 });
 
 

@@ -1424,7 +1424,7 @@ export default function App() {
           settings={settings} onSettings={updateSettings} onToast={setToast} onClose={() => setSheet('settings')} /></Appear>
       )}
 
-      {debug && <DebugPanel onClose={() => setDebug(false)} jam={jam} onJam={(v) => { setJam(v); engine.simulateJam = v; dlog(v ? '🧪 тест глушения ВКЛ: GPS игнорируется' : '🧪 тест глушения ВЫКЛ'); }} />}
+      {debug && <DebugPanel onClose={() => setDebug(false)} jam={jam} onJam={(v) => { setJam(v); engine.simulateJam = v; dlog(v ? '🧪 тест глушения ВКЛ: GPS игнорируется' : '🧪 тест глушения ВЫКЛ'); }} settings={settings} />}
 
       {servicesOff && (
         <Pressable style={[ui.card, s.locOff]} onPress={enableLocation}>

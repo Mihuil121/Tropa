@@ -173,35 +173,50 @@ export async function probe(url: string, timeoutMs = 4000): Promise<boolean> {
 export type HostCheckResult = { name: string; url: string; ok: boolean; status?: number; error?: string; ms: number };
 
 export async function checkNetworkHosts(customDataUrl?: string): Promise<HostCheckResult[]> {
-  const hosts: { name: string; url: string }[] = [
-    { name: 'Overpass #1 (ru)', url: 'https://overpass.openstreetmap.ru/api/interpreter' },
-    { name: 'Overpass #2 (kumi)', url: 'https://overpass.kumi.systems/api/interpreter' },
-    { name: 'Overpass #3 (de)', url: 'https://overpass-api.de/api/interpreter' },
-    { name: 'Valhalla #1 (de)', url: 'https://valhalla1.openstreetmap.de/route' },
-    { name: 'Valhalla #2 (kumi)', url: 'https://valhalla.kumi.systems/route' },
-    { name: 'OSRM (public)', url: 'https://router.project-osrm.org/route/v1/driving/33.5,44.5;33.6,44.6' },
-    { name: 'Open-Meteo', url: 'https://api.open-meteo.com/v1/forecast?latitude=44.5&longitude=33.5&current_weather=true' },
-    { name: 'OpenFreeMap', url: 'https://tiles.openfreemap.org/planet/0/0/0.pbf' },
-    { name: 'data.source.coop', url: 'https://data.source.coop' },
-    { name: 'beaconDB', url: 'https://api.beacondb.net/v1/geolocate' },
+  const hosts: { name: string; url: string; method: 'GET' | 'POST'; body?: string }[] = [
+    { name: 'Overpass #1 (ru)', url: 'https://overpass.openstreetmap.ru/api/interpreter', method: 'POST', body: 'data=[out:json];node(1);out;' },
+    { name: 'Overpass #2 (kumi)', url: 'https://overpass.kumi.systems/api/interpreter', method: 'POST', body: 'data=[out:json];node(1);out;' },
+    { name: 'Overpass #3 (de)', url: 'https://overpass-api.de/api/interpreter', method: 'POST', body: 'data=[out:json];node(1);out;' },
+    { name: 'Valhalla #1 (de)', url: 'https://valhalla1.openstreetmap.de/route', method: 'POST', body: '{"locations":[]}' },
+    { name: 'Valhalla #2 (kumi)', url: 'https://valhalla.kumi.systems/route', method: 'POST', body: '{"locations":[]}' },
+    { name: 'OSRM (public)', url: 'https://router.project-osrm.org/route/v1/driving/33.5,44.5;33.6,44.6', method: 'GET' },
+    { name: 'Open-Meteo', url: 'https://api.open-meteo.com/v1/forecast?latitude=44.5&longitude=33.5&current_weather=true', method: 'GET' },
+    { name: 'OpenFreeMap', url: 'https://tiles.openfreemap.org/planet/0/0/0.pbf', method: 'GET' },
+    { name: 'data.source.coop', url: 'https://data.source.coop', method: 'GET' },
+    { name: 'beaconDB', url: 'https://api.beacondb.net/v1/geolocate', method: 'POST', body: '{}' },
   ];
   if (customDataUrl) {
-    hosts.push({ name: 'Свой сервер данных', url: customDataUrl });
+    hosts.push({ name: 'Свой сервер данных', url: customDataUrl, method: 'GET' });
   }
 
   const results: HostCheckResult[] = [];
   for (const h of hosts) {
     const t0 = performance.now();
     try {
-      const r = await fetchText(h.url, { method: 'HEAD', timeoutMs: 5000 });
+      const opts: FetchOpts = {
+        method: h.method,
+        timeoutMs: 6000,
+        ...(h.body ? { body: h.body, headers: { 'Content-Type': 'application/x-www-form-urlencoded' } } : {}),
+      };
+      const res = await fetchText(h.url, opts);
       const ms = Math.round(performance.now() - t0);
-      results.push({ name: h.name, url: h.url, ok: true, status: r.status, ms });
-      dlog(`сеть [✓]: ${h.name} (${ms} мс, HTTP ${r.status})`);
+      const isAliveCode = (res.status >= 200 && res.status < 300) || res.status === 400;
+      const statusLabel = res.status === 400 ? 'жив, 400' : `HTTP ${res.status}`;
+      const snippet = (res.text || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+      results.push({ name: h.name, url: h.url, ok: isAliveCode, status: res.status, ms, error: isAliveCode ? undefined : `HTTP ${res.status}: ${snippet}` });
+      dlog(`сеть [${isAliveCode ? '✓' : '✗'}]: ${h.name} (${ms} мс, ${statusLabel})`);
     } catch (e: any) {
       const ms = Math.round(performance.now() - t0);
-      const err = String(e?.message ?? e);
-      results.push({ name: h.name, url: h.url, ok: false, error: err, ms });
-      dlog(`сеть [✗]: ${h.name} (${ms} мс, ошибка: ${err})`);
+      let errType = String(e?.message ?? e);
+      if (errType.includes('UnknownHostException') || errType.includes('ENOTFOUND') || errType.includes('resolve host')) {
+        errType = 'DNS ошибка (нет хоста)';
+      } else if (e instanceof TimeoutError || errType.includes('нет ответа')) {
+        errType = 'Таймаут (сервер молчит)';
+      } else if (errType.includes('Connection reset') || errType.includes('connection abort') || errType.includes('Failed to connect')) {
+        errType = 'Обрыв / нет соединения';
+      }
+      results.push({ name: h.name, url: h.url, ok: false, error: errType, ms });
+      dlog(`сеть [✗]: ${h.name} (${ms} мс, ошибка: ${errType})`);
     }
   }
   return results;
