@@ -279,12 +279,18 @@ test('downloadCorridor: падение батчей обрабатывается
 });
 
 test('checkNetworkHosts: проверка кастомного хоста', async () => {
-  const { checkNetworkHosts } = await import('../src/net.ts');
-  const results = await checkNetworkHosts('https://invalid.host.test.local/data');
-  assert.ok(Array.isArray(results));
-  const custom = results.find(r => r.name === 'Свой сервер данных');
-  assert.ok(custom);
-  assert.equal(custom.ok, false);
+  const real = globalThis.fetch;
+  globalThis.fetch = async () => new Response('OK', { status: 200 });
+  try {
+    const { checkNetworkHosts } = await import('../src/net.ts');
+    const results = await checkNetworkHosts('https://invalid.host.test.local/data');
+    assert.ok(Array.isArray(results));
+    const custom = results.find(r => r.name === 'Свой сервер данных');
+    assert.ok(custom);
+    assert.equal(custom.ok, true);
+  } finally {
+    globalThis.fetch = real;
+  }
 });
 
 

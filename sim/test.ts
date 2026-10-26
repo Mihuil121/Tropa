@@ -564,3 +564,13 @@ test('Яндекс: проекция EPSG:3395, чтение цвета под �
     assert.ok(jams.length >= 1 && jams.some((j) => j.lengthM > 300));
   } finally { globalThis.fetch = real; }
 });
+
+test('Мыльников: разбор ответа API по вышке и Wi‑Fi', async () => {
+  const { parseMylnikov } = await import('../src/online.ts');
+  assert.deepEqual(parseMylnikov({ result: 200, data: { lat: 44.6, lon: 33.5, range: 450 } }), { lat: 44.6, lon: 33.5, accuracy: 450 });
+  assert.equal(parseMylnikov({ result: 404 }), null);
+  assert.equal(parseMylnikov({ result: 200, data: { lat: 0, lon: 0 } }), null);
+  assert.equal(parseMylnikov({ result: 200, data: { lat: 'x', lon: 1 } }), null);
+  assert.equal(parseMylnikov(null), null);
+  assert.equal(parseMylnikov({ result: 200, data: { lat: 44.6, lon: 33.5 } })!.accuracy, 1000);
+});

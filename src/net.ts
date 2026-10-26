@@ -173,17 +173,18 @@ export async function probe(url: string, timeoutMs = 4000): Promise<boolean> {
 export type HostCheckResult = { name: string; url: string; ok: boolean; status?: number; error?: string; ms: number };
 
 export async function checkNetworkHosts(customDataUrl?: string): Promise<HostCheckResult[]> {
-  const hosts: { name: string; url: string; method: 'GET' | 'POST'; body?: string }[] = [
-    { name: 'Overpass #1 (ru)', url: 'https://overpass.openstreetmap.ru/api/interpreter', method: 'POST', body: 'data=[out:json];node(1);out;' },
-    { name: 'Overpass #2 (kumi)', url: 'https://overpass.kumi.systems/api/interpreter', method: 'POST', body: 'data=[out:json];node(1);out;' },
-    { name: 'Overpass #3 (de)', url: 'https://overpass-api.de/api/interpreter', method: 'POST', body: 'data=[out:json];node(1);out;' },
-    { name: 'Valhalla #1 (de)', url: 'https://valhalla1.openstreetmap.de/route', method: 'POST', body: '{"locations":[]}' },
-    { name: 'Valhalla #2 (kumi)', url: 'https://valhalla.kumi.systems/route', method: 'POST', body: '{"locations":[]}' },
+  const hosts: { name: string; url: string; method: 'GET' | 'POST'; body?: string; contentType?: string }[] = [
+    { name: 'Overpass #1 (ru)', url: 'https://overpass.openstreetmap.ru/api/interpreter', method: 'POST', body: 'data=' + encodeURIComponent('[out:json];node(1);out;'), contentType: 'application/x-www-form-urlencoded' },
+    { name: 'Overpass #2 (kumi)', url: 'https://overpass.kumi.systems/api/interpreter', method: 'POST', body: 'data=' + encodeURIComponent('[out:json];node(1);out;'), contentType: 'application/x-www-form-urlencoded' },
+    { name: 'Overpass #3 (de)', url: 'https://overpass-api.de/api/interpreter', method: 'POST', body: 'data=' + encodeURIComponent('[out:json];node(1);out;'), contentType: 'application/x-www-form-urlencoded' },
+    { name: 'Valhalla #1 (de)', url: 'https://valhalla1.openstreetmap.de/route', method: 'POST', body: '{"locations":[{"lat":44.6,"lon":33.5},{"lat":44.61,"lon":33.51}],"costing":"auto"}', contentType: 'application/json' },
+    { name: 'Valhalla #2 (kumi)', url: 'https://valhalla.kumi.systems/route', method: 'POST', body: '{"locations":[{"lat":44.6,"lon":33.5},{"lat":44.61,"lon":33.51}],"costing":"auto"}', contentType: 'application/json' },
     { name: 'OSRM (public)', url: 'https://router.project-osrm.org/route/v1/driving/33.5,44.5;33.6,44.6', method: 'GET' },
     { name: 'Open-Meteo', url: 'https://api.open-meteo.com/v1/forecast?latitude=44.5&longitude=33.5&current_weather=true', method: 'GET' },
     { name: 'OpenFreeMap', url: 'https://tiles.openfreemap.org/planet/0/0/0.pbf', method: 'GET' },
     { name: 'data.source.coop', url: 'https://data.source.coop', method: 'GET' },
-    { name: 'beaconDB', url: 'https://api.beacondb.net/v1/geolocate', method: 'POST', body: '{}' },
+    { name: 'beaconDB', url: 'https://api.beacondb.net/v1/geolocate', method: 'POST', body: '{"wifiAccessPoints":[]}', contentType: 'application/json' },
+    { name: 'Мыльников (вышки/Wi‑Fi)', url: 'https://api.mylnikov.org/geolocation/wifi?v=1.1&data=open&bssid=00:0C:42:1F:65:E9', method: 'GET' },
   ];
   if (customDataUrl) {
     hosts.push({ name: 'Свой сервер данных', url: customDataUrl, method: 'GET' });
@@ -196,14 +197,17 @@ export async function checkNetworkHosts(customDataUrl?: string): Promise<HostChe
       const opts: FetchOpts = {
         method: h.method,
         timeoutMs: 6000,
-        ...(h.body ? { body: h.body, headers: { 'Content-Type': 'application/x-www-form-urlencoded' } } : {}),
+        ...(h.body ? { body: h.body, headers: { 'Content-Type': h.contentType || 'application/json' } } : {}),
       };
       const res = await fetchText(h.url, opts);
       const ms = Math.round(performance.now() - t0);
-      const isAliveCode = (res.status >= 200 && res.status < 300) || res.status === 400;
-      const statusLabel = res.status === 400 ? 'жив, 400' : `HTTP ${res.status}`;
+      const isAliveCode = (res.status >= 200 && res.status < 300) || res.status === 400 || res.status === 422;
+      const statusLabel = res.status >= 200 && res.status < 300 ? `HTTP ${res.status}` : `жив, ${res.status}`;
       const snippet = (res.text || '').replace(/\s+/g, ' ').trim().slice(0, 120);
-      results.push({ name: h.name, url: h.url, ok: isAliveCode, status: res.status, ms, error: isAliveCode ? undefined : `HTTP ${res.status}: ${snippet}` });
+      results.push({
+        name: h.name, url: h.url, ok: isAliveCode, status: res.status, ms,
+        error: isAliveCode ? undefined : `HTTP ${res.status}${snippet ? `: ${snippet}` : ''}`,
+      });
       dlog(`сеть [${isAliveCode ? '✓' : '✗'}]: ${h.name} (${ms} мс, ${statusLabel})`);
     } catch (e: any) {
       const ms = Math.round(performance.now() - t0);

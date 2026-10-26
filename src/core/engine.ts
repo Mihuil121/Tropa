@@ -136,6 +136,14 @@ export class NavEngine {
   private moveVibRun = 0;
 
   private lastStillT = -Infinity;
+  // --- «стоим» по радиоэфиру: набор видимых Wi‑Fi не меняется -> машина/человек не двигается ---
+  private wifiHist: { t: number; set: Set<string> }[] = [];
+  private radioStillSince: number | null = null;
+  private radioMoveRun = 0;
+  private holdByRadio = false;
+  // --- спутники: когда в решении было 0 (точка при 0 спутников — подделка/кэш) ---
+  private gnssZeroSince: number | null = null;
+  private gnssSeenT = -Infinity;
   private lastReasonKind: 'net' | 'sensor' | 'signal' | 'jump' | 'other' | '' = '';
 
   // --- повороты: накопленный курс по гироскопу ---
@@ -251,8 +259,22 @@ export class NavEngine {
     const gpsLiveNow = this.gpsStatus === 'ok' && this.lastGpsSpeed !== null && t - this.lastGpsT < 2;
     this.ctx.onSecond(t, tiltRate, gpsLiveNow ? this.lastGpsSpeed : null);
 
+    // Wi‑Fi вокруг не меняется давно — значит, стоим (даже если GPS подменён и «едет»)
+    if (!gpsLiveNow && this.ekf.initialized && this.ctx.movement !== 'walking') {
+      if (this.radioStillSince !== null && t - this.radioStillSince >= 12 && !this.holdStill) {
+        this.holdStill = true; this.holdByRadio = true;
+        this.stillAnchor = { x: this.ekf.x[IX], y: this.ekf.x[IY] };
+        this.stillMoveVotes = 0; this.moveVibRun = 0;
+        this.lastFix = 'стоим (Wi‑Fi вокруг не меняется)';
+      } else if (this.holdByRadio && this.holdStill && this.radioMoveRun >= 2) {
+        this.holdStill = false; this.holdByRadio = false;
+        this.lastFix = 'тронулись (Wi‑Fi вокруг сменился)';
+      }
+    }
+
     // Пока GPS честный — запоминаем, стоим ли мы (и где)
     if (gpsLiveNow) {
+      this.holdByRadio = false;
       this.holdStill = this.lastGpsSpeed! < 1.5;
       if (this.holdStill && this.ekf.initialized) this.stillAnchor = { x: this.ekf.x[IX], y: this.ekf.x[IY] };
       this.stillMoveVotes = 0; this.moveVibRun = 0;
@@ -286,7 +308,7 @@ export class NavEngine {
         this.cruise = this.cruiseLearned ? 0.99 * this.cruise + 0.01 * this.lastGpsSpeed! : this.lastGpsSpeed!; this.cruiseLearned = true;
       }
       if (!this.ekf.initialized || t - this.lastObdT < 3 || gpsLiveNow) return;
-      if (t - this.lastWeakSpeedT >= 10 && this.cruise > 3) {
+      if (t - this.lastWeakSpeedT >= 10 && this.cruise > 3 && this.canGuessSpeed(t)) {
         this.lastWeakSpeedT = t;
         this.speedUpd(this.cruise, 10, CHI2_1DOF * 4);
       }
@@ -332,9 +354,20 @@ export class NavEngine {
     if (this.vibModel) {
       const v = Math.min(45, Math.max(1, this.vibModel.a + this.vibModel.b * this.vibAvg));
       this.speedUpd(v, Math.max(4, 2 * this.vibModel.sd), CHI2_1DOF * 4);
-    } else if (this.cruise > 3) {
+    } else if (this.cruise > 3 && this.canGuessSpeed(t)) {
       this.speedUpd(this.cruise, 10, CHI2_1DOF * 4);
     }
+  }
+
+  /**
+   * «Едем как обычно» можно подставлять, только если есть повод считать, что мы вообще едем:
+   * скорость уже выучена по честному GPS, либо построен маршрут, либо радио видело движение.
+   * Иначе стоящий телефон «уезжает» сам по себе.
+   */
+  private canGuessSpeed(t: number): boolean {
+    if (t - this.startTime < 25 && !this.cruiseLearned) return false;
+    if (this.radioStillSince !== null && t - this.radioStillSince >= 12) return false;
+    return this.cruiseLearned || !!this.route || this.radioMoveRun >= 1;
   }
 
   /** Гироскоп показывает повороты машины, только если телефон лежит и мы не идём пешком. */
@@ -531,12 +564,36 @@ export class NavEngine {
     this.advance(t);
     this.lastCellsN = cells.length;
     this.lastWifiN = wifi.length;
+    this.trackWifi(t, wifi);
     if (!this.cellDb) { this.lastCellsKnown = 0; return; }
     const fix = this.cellDb.locate(cells, wifi);
     this.lastCellsKnown = fix?.used ?? 0;
     if (!fix) return;
     this.applyCoarseFix(t, fix, fix.wifi ? `Wi‑Fi (${fix.wifi}) + вышки` : `вышки (${fix.used})`);
     this.useTimingAdvance(cells);
+  }
+
+  /**
+   * Сравниваем набор Wi‑Fi сейчас и ~20 с назад. В машине на ходу набор меняется быстро
+   * (за 20 с — сотни метров), на месте — почти тот же. Нужно хотя бы 3 точки.
+   */
+  private trackWifi(t: number, wifi: WifiAp[]) {
+    const set = new Set(wifi.filter((w) => w.dbm > -88).map((w) => w.bssid.toLowerCase()));
+    this.wifiHist.push({ t, set });
+    while (this.wifiHist.length && t - this.wifiHist[0].t > 60) this.wifiHist.shift();
+    if (set.size < 3) { this.radioStillSince = null; this.radioMoveRun = 0; return; }
+    const ref = [...this.wifiHist].reverse().find((h) => t - h.t >= 15 && h.set.size >= 3);
+    if (!ref) return;
+    let inter = 0;
+    for (const b of set) if (ref.set.has(b)) inter++;
+    const jac = inter / (set.size + ref.set.size - inter);
+    if (jac >= 0.6) {
+      this.radioMoveRun = 0;
+      this.radioStillSince ??= this.wifiHist[0].t;
+    } else if (jac < 0.35) {
+      this.radioMoveRun++;
+      this.radioStillSince = null;
+    }
   }
 
   /**
@@ -604,6 +661,8 @@ export class NavEngine {
     if (this.startTime === 0) this.startTime = t;
     this.advance(t);
     this.gnssUsed = sig.used;
+    this.gnssSeenT = t;
+    if (sig.used === 0) this.gnssZeroSince ??= t; else this.gnssZeroSince = null;
     // На холодном старте первые 15 секунд 0 спутников — нормальное явление, не считаем подменой
     if (t - this.startTime < 15 && sig.used === 0) return;
     this.sigRecent.push(sig);
@@ -665,8 +724,7 @@ export class NavEngine {
   onGps(f: GpsFix) {
     this.advance(f.t);
     if (this.simulateJam) { this.setStatus('jammed', 'тест глушения: GPS отключён вручную'); return; }
-    this.lastGpsSpeed = f.speed ?? null;
-    this.lastGpsBearing = f.bearing != null && (f.speed ?? 0) > 0.8 ? toRad(f.bearing) : null;
+    this.lastGpsSpeed = null; this.lastGpsBearing = null; // пока не прошла проверка — не используем
     this.ensureFrame(f);
     const xy = this.frame!.toXY(f);
     let baseAcc = Math.max(3, f.accuracy || 50);
@@ -698,12 +756,24 @@ export class NavEngine {
 
     const reason = this.integrityCheck(f, xy, acc);
 
+    // Ещё не знаем, где мы, и нет независимой точки (сеть/Wi‑Fi/вышки): первую точку GPS не берём
+    // сразу — сеть обычно отвечает за несколько секунд. Подменённая точка иначе увозит стрелку за сотни км.
+    // Честная точка всегда идёт минимум с 4 спутниками в решении; меньше — кэш или подделка.
+    const fewSats = this.gnssUsed !== null && f.t - this.gnssSeenT < 3 && this.gnssUsed < 4;
+    if (!this.ekf.initialized && !reason && !this.lastCoarse && !this.lastCell && fewSats && f.t - this.startTime < 20) {
+      this.setStatus('checking', 'ждём сеть, чтобы проверить GPS');
+      this.prevGps = { ...f, xy };
+      return;
+    }
+
     if (!this.ekf.initialized) {
       if (reason) { this.markBad('spoofed', `GPS подменён — позиция по датчикам (${reason})`); return; }
       const hasBearing = f.bearing != null && (f.speed ?? 0) > 3;
       this.ekf.init(xy.x, xy.y, acc ** 2, hasBearing ? toRad(f.bearing!) : 0,
         hasBearing ? toRad(20) ** 2 : Math.PI ** 2, f.speed ?? this.lastObdMs, 4);
       this.goodRun = 1;
+      this.lastGpsSpeed = f.speed ?? null;
+      this.lastGpsBearing = f.bearing != null && (f.speed ?? 0) > 0.8 ? toRad(f.bearing) : null;
       this.setStatus('ok', '');
       this.lastGoodGpsT = f.t;
       this.prevGps = { ...f, xy };
@@ -718,6 +788,8 @@ export class NavEngine {
       return;
     }
 
+    this.lastGpsSpeed = f.speed ?? null;
+    this.lastGpsBearing = f.bearing != null && (f.speed ?? 0) > 0.8 ? toRad(f.bearing) : null;
     this.badRun = 0;
     this.goodRun++;
     // После подмены/заглушения проверяем от 8 до 20 честных точек подряд
@@ -796,6 +868,20 @@ export class NavEngine {
     // 3b. Движение по датчикам: если GPS показывает > 12 км/ч, а телефон стоит
     if ((this.stopped || (this.ctx.movement as string) === 'still') && (f.speed ?? 0) > 3.5) {
       reason ||= `GPS показывает ${Math.round((f.speed ?? 0) * 3.6)} км/ч, но телефон стоит`;
+      kind ||= 'sensor';
+      coherent = false;
+    }
+
+    // 3c. Точка есть, а спутников в решении 0 уже несколько секунд — так не бывает (кэш/подделка)
+    if (this.gnssZeroSince !== null && t - this.gnssSeenT < 3 && t - this.gnssZeroSince >= 3 && acc < 100) {
+      reason ||= 'точка есть, а спутников в решении 0';
+      kind ||= 'signal';
+      coherent = false;
+    }
+
+    // 3d. Скорость GPS большая, а телефон «стоит» по Wi‑Fi — подмена
+    if (this.radioStillSince !== null && t - this.radioStillSince >= 12 && (f.speed ?? 0) > 3.5) {
+      reason ||= `GPS ${Math.round((f.speed ?? 0) * 3.6)} км/ч, а Wi‑Fi вокруг не меняется`;
       kind ||= 'sensor';
       coherent = false;
     }
