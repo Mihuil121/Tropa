@@ -135,6 +135,9 @@ export class NavEngine {
   private stillMoveVotes = 0;
   private moveVibRun = 0;
 
+  private lastStillT = -Infinity;
+  private lastReasonKind: 'net' | 'sensor' | 'signal' | 'jump' | 'other' | '' = '';
+
   // --- повороты: накопленный курс по гироскопу ---
   private headAcc = 0;
   private headOffset: number | null = null; // курс на местности − накопленный курс гироскопа (учится при GPS)
@@ -300,6 +303,7 @@ export class NavEngine {
 
     if (vib < thr) this.stillSince ??= t; else this.stillSince = null;
     this.stopped = this.stillSince !== null && t - this.stillSince >= 3;
+    if (this.stopped || this.holdStill || (this.ctx.movement as string) === 'still') this.lastStillT = t;
     this.vibAvg = this.vibAvg ? 0.8 * this.vibAvg + 0.2 * vib : vib;
 
     // Пока GPS честный — учимся: насколько сильно трясёт на какой скорости
@@ -689,7 +693,6 @@ export class NavEngine {
         return;
       }
       this.markBad('jammed', `точность ${Math.round(acc)} м`);
-      this.prevGps = { ...f, xy };
       return;
     }
 
@@ -731,9 +734,16 @@ export class NavEngine {
 
   // ---------- Антиподмена ----------
 
+  private allowedJump(t: number): number {
+    const dtGood = this.lastGoodGpsT > 0 ? Math.min(120, Math.max(1, t - this.lastGoodGpsT)) : 1;
+    const posSig = this.ekf.initialized ? this.ekf.posSigma : 50;
+    return 60 * dtGood + 3 * posSig + 200;
+  }
+
   /** Возвращает причину недоверия или '' если всё сходится. */
   private integrityCheck(f: GpsFix, xy: XY, acc: number): string {
     let reason = '';
+    let kind: 'net' | 'sensor' | 'signal' | 'jump' | 'other' | '' = '';
     let coherent = true;
     const t = f.t;
 
@@ -741,7 +751,10 @@ export class NavEngine {
     const obdFresh = t - this.lastObdT < 3;
     if (obdFresh && f.speed != null) {
       const vWheel = this.lastObdMs / (this.ekf.initialized ? this.ekf.x[IS] : 1);
-      if (Math.abs(f.speed - vWheel) > Math.max(4, 0.25 * vWheel)) reason = `скорость GPS ${Math.round(f.speed * 3.6)} ≠ колёса ${Math.round(vWheel * 3.6)} км/ч`;
+      if (Math.abs(f.speed - vWheel) > Math.max(4, 0.25 * vWheel)) {
+        reason = `скорость GPS ${Math.round(f.speed * 3.6)} ≠ колёса ${Math.round(vWheel * 3.6)} км/ч`;
+        kind = 'sensor';
+      }
     }
 
     // 2. Вышки и сеть: GPS не может отличаться от сетевой точки более чем на 2 км
@@ -750,18 +763,20 @@ export class NavEngine {
       const dNet = dist(xy, this.frame.toXY({ lat: netLoc.lat, lon: netLoc.lon }));
       if (dNet > Math.max(1800, 3 * netLoc.accuracy + 500)) {
         reason ||= `GPS в ${(dNet / 1000).toFixed(1)} км от вышек/сети`;
+        kind ||= 'net';
         coherent = false;
       }
     }
 
-    // 3. Скачок: сравнивай не с prevGps при dt<10, а с последней ХОРОШЕЙ позицией (lastGoodGpsT и позиция фильтра)
+    // 3. Скачок: сравниваем с последней ХОРОШЕЙ позицией (lastGoodGpsT и позиция фильтра)
     if (this.ekf.initialized && this.lastGoodGpsT > 0) {
       const dtGood = t - this.lastGoodGpsT;
       if (dtGood > 0) {
         const dGood = dist(xy, { x: this.ekf.x[IX], y: this.ekf.x[IY] });
-        const maxAllowed = 60 * dtGood + 3 * this.ekf.posSigma + 200;
+        const maxAllowed = this.allowedJump(t);
         if (dGood > maxAllowed) {
           reason ||= `скачок ${Math.round(dGood)} м за ${dtGood.toFixed(1)} с`;
+          kind ||= 'jump';
           coherent = false;
         }
       }
@@ -769,9 +784,10 @@ export class NavEngine {
       const dt = t - this.prevGps.t;
       if (dt > 0) {
         const dJump = dist(xy, this.prevGps.xy);
-        const maxAllowed = 60 * dt + 200;
+        const maxAllowed = 60 * Math.min(dt, 120) + 200;
         if (dJump > maxAllowed) {
           reason ||= `скачок ${Math.round(dJump)} м за ${dt.toFixed(1)} с`;
+          kind ||= 'jump';
           coherent = false;
         }
       }
@@ -780,33 +796,42 @@ export class NavEngine {
     // 3b. Движение по датчикам: если GPS показывает > 12 км/ч, а телефон стоит
     if ((this.stopped || this.ctx.movement === 'still') && (f.speed ?? 0) > 3.5) {
       reason ||= `GPS показывает ${Math.round((f.speed ?? 0) * 3.6)} км/ч, но телефон стоит`;
+      kind ||= 'sensor';
       coherent = false;
     }
 
     // 4. Сам радиосигнал похож на подмену (см. onGnssSignal)
-    if (this.signalHint === 'spoof') { reason ||= `сигнал: ${this.signalWhy}`; coherent = false; }
+    if (this.signalHint === 'spoof') {
+      reason ||= `сигнал: ${this.signalWhy}`;
+      kind ||= 'signal';
+      coherent = false;
+    }
 
     // 5. Статистика фильтра: насколько точка «невероятна» с учётом нашей неопределённости
     if (this.ekf.initialized && !reason) {
       const d2 = this.ekf.mahalanobis(this.ekf.posMeas(xy.x, xy.y, Math.max(acc, 8)));
-      if (d2 > CHI2_2DOF * 3) reason = `точка вне ожидаемой области (d²=${d2.toFixed(0)})`;
+      if (d2 > CHI2_2DOF * 3) {
+        reason = `точка вне ожидаемой области (d²=${d2.toFixed(0)})`;
+        kind ||= 'other';
+      }
     }
 
+    this.lastReasonKind = reason ? kind : '';
     this.coherentRun = coherent && !(reason && reason.startsWith('скорость')) ? this.coherentRun + 1 : 0;
     return reason;
   }
 
   private canReinitFromGps(f: GpsFix, xy: XY, acc: number): boolean {
     const t = f.t;
+    if (this.lastReasonKind === 'net' || this.lastReasonKind === 'sensor' || this.lastReasonKind === 'signal') return false;
     if (this.stopped || this.ctx.movement === 'still') return false;
-    if (this.stillSince !== null && t - this.stillSince < 20) return false;
+    if (t - this.lastStillT < 20) return false;
     if (this.coherentRun < 20) return false;
 
     let distOk = false;
     if (this.ekf.initialized && this.lastGoodGpsT > 0) {
-      const dtGood = t - this.lastGoodGpsT;
       const dGood = dist(xy, { x: this.ekf.x[IX], y: this.ekf.x[IY] });
-      const maxAllowed = 60 * (dtGood > 0 ? dtGood : 1) + 3 * this.ekf.posSigma + 200;
+      const maxAllowed = this.allowedJump(t);
       distOk = dGood <= maxAllowed;
     }
 
