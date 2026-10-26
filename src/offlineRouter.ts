@@ -289,6 +289,11 @@ export function getRegionFallbackUrl(): string | null {
  * Куски по 12 прямоугольников за запрос — чтобы ответ не был огромным для слабого телефона.
  */
 export async function downloadCorridor(pts: LatLon[], opts: { signal?: AbortSignal; onProgress?: (pct: number) => void } = {}): Promise<StoredGraph> {
+  if (opts.signal?.aborted) {
+    const e = new Error('Отменено');
+    e.name = 'AbortError';
+    throw e;
+  }
   const boxes = corridorBoxes(pts);
   const batches: BBox[][] = [];
   for (let i = 0; i < boxes.length; i += 12) batches.push(boxes.slice(i, i + 12));

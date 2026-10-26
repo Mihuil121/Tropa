@@ -9,6 +9,8 @@
 //   4) несколько серверов опрашиваются внахлёст: следующий стартует, если предыдущий
 //      не ответил за пару секунд; берём первый удачный ответ, остальные отменяем.
 
+import { dlog } from './debugLog.ts';
+
 export type FetchOpts = RequestInit & {
   timeoutMs?: number;
   /**
@@ -166,4 +168,41 @@ export async function probe(url: string, timeoutMs = 4000): Promise<boolean> {
   try { await fetchText(url, { method: 'HEAD', timeoutMs }); ok = true; } catch { ok = false; }
   probeCache.set(h, { ok, t: Date.now() });
   return ok;
+}
+
+export type HostCheckResult = { name: string; url: string; ok: boolean; status?: number; error?: string; ms: number };
+
+export async function checkNetworkHosts(customDataUrl?: string): Promise<HostCheckResult[]> {
+  const hosts: { name: string; url: string }[] = [
+    { name: 'Overpass #1 (ru)', url: 'https://overpass.openstreetmap.ru/api/interpreter' },
+    { name: 'Overpass #2 (kumi)', url: 'https://overpass.kumi.systems/api/interpreter' },
+    { name: 'Overpass #3 (de)', url: 'https://overpass-api.de/api/interpreter' },
+    { name: 'Valhalla #1 (de)', url: 'https://valhalla1.openstreetmap.de/route' },
+    { name: 'Valhalla #2 (kumi)', url: 'https://valhalla.kumi.systems/route' },
+    { name: 'OSRM (public)', url: 'https://router.project-osrm.org/route/v1/driving/33.5,44.5;33.6,44.6' },
+    { name: 'Open-Meteo', url: 'https://api.open-meteo.com/v1/forecast?latitude=44.5&longitude=33.5&current_weather=true' },
+    { name: 'OpenFreeMap', url: 'https://tiles.openfreemap.org/planet/0/0/0.pbf' },
+    { name: 'data.source.coop', url: 'https://data.source.coop' },
+    { name: 'beaconDB', url: 'https://api.beacondb.net/v1/geolocate' },
+  ];
+  if (customDataUrl) {
+    hosts.push({ name: 'Свой сервер данных', url: customDataUrl });
+  }
+
+  const results: HostCheckResult[] = [];
+  for (const h of hosts) {
+    const t0 = performance.now();
+    try {
+      const r = await fetchText(h.url, { method: 'HEAD', timeoutMs: 5000 });
+      const ms = Math.round(performance.now() - t0);
+      results.push({ name: h.name, url: h.url, ok: true, status: r.status, ms });
+      dlog(`сеть [✓]: ${h.name} (${ms} мс, HTTP ${r.status})`);
+    } catch (e: any) {
+      const ms = Math.round(performance.now() - t0);
+      const err = String(e?.message ?? e);
+      results.push({ name: h.name, url: h.url, ok: false, error: err, ms });
+      dlog(`сеть [✗]: ${h.name} (${ms} мс, ошибка: ${err})`);
+    }
+  }
+  return results;
 }

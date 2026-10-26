@@ -247,7 +247,7 @@ export default function App() {
   const [recent, setRecent] = useState<RecentPlace[]>([]);
   useEffect(() => { loadRecent().then(setRecent); }, []);
   useEffect(() => {
-    if (settings.operaProxy) {
+    if (settings.operaProxy !== false) {
       startOperaProxy({ country: settings.operaCountry || 'EU' });
     } else {
       stopOperaProxy();
@@ -268,7 +268,14 @@ export default function App() {
       setScreen('nav');
     }
   }
-  useEffect(() => { reloadData(true); loadSettings().then((st) => { setSettings(st); voice.enabled = st.voice !== false; }); }, []);
+  useEffect(() => {
+    reloadData(true);
+    loadSettings().then((st) => {
+      const merged = { operaProxy: true, operaCountry: 'EU' as const, ...st };
+      setSettings(merged);
+      voice.enabled = merged.voice !== false;
+    });
+  }, []);
   useEffect(() => { if (toast) { const t = setTimeout(() => setToast(''), 4000); return () => clearTimeout(t); } }, [toast]);
 
   // ---------- Маршрут: прокладываем все три варианта, как только знаем, где мы ----------
@@ -888,7 +895,9 @@ export default function App() {
       dlog(`офлайн-граф дорог для поездки «${routeName}» сохранён`);
     } catch (e: any) {
       dlogError('офлайн граф дорог', e);
-      await finalizeTripPart(tripId, 'graph', String(e?.message ?? e));
+      await deleteTrip(tripId);
+      setToast(`Не удалось скачать офлайн-граф: ${e?.message ?? e}`);
+      return;
     }
 
     await reloadData();
@@ -1227,27 +1236,29 @@ export default function App() {
       )}
 
       {/* ---------- Кнопки справа ---------- */}
-      {screen !== 'search' && (
-        <View style={[s.side, { bottom: bottom + sz(compact ? 100 : 118) }, screen === 'nav' && { bottom: sz(230) }]}>
-          <MapButtonGroup items={[
-            ...(Math.abs(mapBearing) > 5 ? [{ icon: 'compass-outline' as IconName, active: true, onPress: () => { setMapBearing(0); setFollow(true); setToast('Карта ориентирована на север'); } }] : []),
-            { icon: 'gas-station' as IconName, active: fuelOn, onPress: toggleFuel },
-            { icon: 'cog-outline', onPress: () => setSheet('settings') },
-            { icon: view3d ? 'video-3d' : 'video-2d', active: view3d, onPress: () => { updateSettings({ ...settings, view3d: !view3d }); setFollow(true); } },
-            { icon: 'traffic-light-outline', active: showTraffic, onPress: () => {
-              if (!settings.gisKey) { setToast('Для пробок нужен бесплатный ключ 2ГИС — введите его в настройках'); setSheet('settings'); return; }
-              const on = !settings.traffic;
-              updateSettings({ ...settings, traffic: on });
-              setToast(on ? (carPts ? 'Пробки: красим маршрут' : 'Пробки покажутся на линии авто-маршрута') : 'Пробки выключены');
-            } },
-            { icon: 'bug-outline', active: debug, onPress: () => setDebug((x) => !x) },
-          ]} />
-          <MapButton icon="navigation-variant" active={follow} onPress={() => {
-            setFollow(true);
-            dlog('нажата «где я»: ready=', nav?.ready, nav ? `${nav.lat.toFixed(5)},${nav.lon.toFixed(5)}` : 'nav=null');
-            if (!nav?.ready) setToast('Место ещё не определено. Нажмите кнопку с жуком — там видно, что происходит.');
-          }} />
-        </View>
+      {screen !== 'search' && screen !== 'preview' && sheet === 'none' && (
+        <Appear key="side" from="fade">
+          <View style={[s.side, { bottom: bottom + sz(compact ? 100 : 118) }, screen === 'nav' && { bottom: sz(230) }]}>
+            <MapButtonGroup items={[
+              ...(Math.abs(mapBearing) > 5 ? [{ icon: 'compass-outline' as IconName, active: true, onPress: () => { setMapBearing(0); setFollow(true); setToast('Карта ориентирована на север'); } }] : []),
+              { icon: 'gas-station' as IconName, active: fuelOn, onPress: toggleFuel },
+              { icon: 'cog-outline', onPress: () => setSheet('settings') },
+              { icon: view3d ? 'video-3d' : 'video-2d', active: view3d, onPress: () => { updateSettings({ ...settings, view3d: !view3d }); setFollow(true); } },
+              { icon: 'traffic-light-outline', active: showTraffic, onPress: () => {
+                if (!settings.gisKey) { setToast('Для пробок нужен бесплатный ключ 2ГИС — введите его в настройках'); setSheet('settings'); return; }
+                const on = !settings.traffic;
+                updateSettings({ ...settings, traffic: on });
+                setToast(on ? (carPts ? 'Пробки: красим маршрут' : 'Пробки покажутся на линии авто-маршрута') : 'Пробки выключены');
+              } },
+              { icon: 'bug-outline', active: debug, onPress: () => setDebug((x) => !x) },
+            ]} />
+            <MapButton icon="navigation-variant" active={follow} onPress={() => {
+              setFollow(true);
+              dlog('нажата «где я»: ready=', nav?.ready, nav ? `${nav.lat.toFixed(5)},${nav.lon.toFixed(5)}` : 'nav=null');
+              if (!nav?.ready) setToast('Место ещё не определено. Нажмите кнопку с жуком — там видно, что происходит.');
+            }} />
+          </View>
+        </Appear>
       )}
 
       {/* ---------- Ведение ---------- */}

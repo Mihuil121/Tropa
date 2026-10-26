@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, Share, StyleSheet, Switch, Text, View, Animated } from 'react-native';
 import { getLines, subscribe } from '../debugLog';
+import { checkNetworkHosts, type HostCheckResult } from '../net';
 import { C, themed, sz } from './theme';
 import { Icon } from './Icon';
 
@@ -10,7 +11,9 @@ export function DebugPanel({ onClose, jam, onJam }: { onClose: () => void; jam: 
   const [, setTick] = useState(0);
   const ref = useRef<any>(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
-  
+  const [checkingNet, setCheckingNet] = useState(false);
+  const [netResults, setNetResults] = useState<HostCheckResult[] | null>(null);
+
   useEffect(() => {
     subscribe(() => setTick((x) => x + 1));
     Animated.timing(fadeAnim, {
@@ -19,7 +22,18 @@ export function DebugPanel({ onClose, jam, onJam }: { onClose: () => void; jam: 
       useNativeDriver: true,
     }).start();
   }, []);
-  
+
+  const runNetCheck = async () => {
+    setCheckingNet(true);
+    setNetResults(null);
+    try {
+      const res = await checkNetworkHosts();
+      setNetResults(res);
+    } catch {} finally {
+      setCheckingNet(false);
+    }
+  };
+
   const lines = getLines();
 
   return (
@@ -32,13 +46,21 @@ export function DebugPanel({ onClose, jam, onJam }: { onClose: () => void; jam: 
             <Text style={s.badgeText}>{lines.length}</Text>
           </View>
         </View>
-        <View style={{ flexDirection: 'row', gap: 8 }}>
+        <View style={{ flexDirection: 'row', gap: 6 }}>
+          <Pressable
+            onPress={runNetCheck}
+            disabled={checkingNet}
+            style={({ pressed }) => [s.btn, pressed && { opacity: 0.7 }]}
+          >
+            <Icon name="web" size={16} color="#6d8bff" style={{ marginRight: 4 }} />
+            <Text style={s.btnText}>{checkingNet ? 'Проверка…' : 'Проверить сеть'}</Text>
+          </Pressable>
           <Pressable 
             onPress={() => Share.share({ message: lines.join('\n') })} 
             style={({ pressed }) => [s.btn, pressed && { opacity: 0.7 }]}
           >
             <Icon name="share-variant-outline" size={16} color="#6d8bff" style={{ marginRight: 4 }} />
-            <Text style={s.btnText}>Поделиться</Text>
+            <Text style={s.btnText}>Лог</Text>
           </Pressable>
           <Pressable 
             onPress={onClose} 
@@ -48,7 +70,28 @@ export function DebugPanel({ onClose, jam, onJam }: { onClose: () => void; jam: 
           </Pressable>
         </View>
       </View>
-      
+
+      {netResults && (
+        <View style={s.netBox}>
+          <Text style={s.netTitle}>Доступность серверов:</Text>
+          <ScrollView style={{ maxHeight: sz(130) }} showsVerticalScrollIndicator={false}>
+            {netResults.map((r, i) => (
+              <View key={i} style={s.netRow}>
+                <Text style={{ color: r.ok ? '#40c057' : '#fa5252', fontWeight: '800', marginRight: 6 }}>
+                  {r.ok ? '✓' : '✗'}
+                </Text>
+                <Text style={{ color: '#fff', fontSize: sz(12), flex: 1 }} numberOfLines={1}>
+                  {r.name} ({r.ms} мс)
+                </Text>
+                <Text style={{ color: r.ok ? '#82c91e' : '#ff8787', fontSize: sz(11) }} numberOfLines={1}>
+                  {r.ok ? `HTTP ${r.status}` : (r.error || 'ошибка')}
+                </Text>
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
       <View style={s.jam}>
         <View style={s.jamIconBox}>
           <Icon name="satellite-variant" size={20} color="#ff6b6b" />
@@ -59,9 +102,6 @@ export function DebugPanel({ onClose, jam, onJam }: { onClose: () => void; jam: 
             Симулирует работу глушилки. Приложение перестанет доверять спутникам 
             и будет определять место по вышкам, Wi‑Fi и датчикам движения.
           </Text>
-          <Text style={[s.jamSub, { marginTop: 6, fontWeight: '600' }]}>
-            ⚠️ Не отключайте геолокацию в настройках — тогда Android блокирует все источники данных
-          </Text>
         </View>
         <Switch 
           value={jam} 
@@ -70,12 +110,12 @@ export function DebugPanel({ onClose, jam, onJam }: { onClose: () => void; jam: 
           thumbColor={jam ? '#fff' : '#9aa6b8'}
         />
       </View>
-      
+
       <View style={s.logHeader}>
         <Icon name="text-box-outline" size={14} color="#6d8bff" style={{ marginRight: 6 }} />
         <Text style={s.logHeaderText}>События системы</Text>
       </View>
-      
+
       <ScrollView 
         ref={ref} 
         style={{ flex: 1 }} 
@@ -124,8 +164,8 @@ const s = themed(() => ({
     flexDirection: 'row', 
     alignItems: 'center', 
     justifyContent: 'space-between',
-    marginBottom: sz(16),
-    paddingBottom: sz(12),
+    marginBottom: sz(12),
+    paddingBottom: sz(8),
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(109,139,255,0.15)',
   },
@@ -136,7 +176,7 @@ const s = themed(() => ({
   },
   title: { 
     color: '#fff', 
-    fontSize: sz(17), 
+    fontSize: sz(16),
     fontWeight: '800',
   },
   badge: {
@@ -144,7 +184,7 @@ const s = themed(() => ({
     borderRadius: sz(10),
     paddingHorizontal: sz(8),
     paddingVertical: 2,
-    marginLeft: sz(8),
+    marginLeft: sz(6),
   },
   badgeText: {
     color: '#fff',
@@ -154,8 +194,8 @@ const s = themed(() => ({
   btn: { 
     backgroundColor: 'rgba(109,139,255,0.15)',
     borderRadius: sz(10), 
-    paddingHorizontal: sz(12), 
-    paddingVertical: sz(8),
+    paddingHorizontal: sz(8),
+    paddingVertical: sz(6),
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
@@ -163,66 +203,84 @@ const s = themed(() => ({
   },
   btnText: { 
     color: '#6d8bff', 
-    fontSize: sz(13),
+    fontSize: sz(12),
     fontWeight: '600',
   },
   closeBtn: {
     backgroundColor: '#ff6b6b',
     borderRadius: sz(10),
-    width: sz(36),
-    height: sz(36),
+    width: sz(32),
+    height: sz(32),
     alignItems: 'center',
     justifyContent: 'center',
   },
+  netBox: {
+    backgroundColor: 'rgba(109,139,255,0.1)',
+    borderRadius: sz(12),
+    padding: sz(10),
+    marginBottom: sz(12),
+    borderWidth: 1,
+    borderColor: 'rgba(109,139,255,0.2)',
+  },
+  netTitle: {
+    color: '#fff',
+    fontSize: sz(13),
+    fontWeight: '700',
+    marginBottom: sz(6),
+  },
+  netRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: sz(2),
+  },
   jam: { 
     flexDirection: 'row', 
-    alignItems: 'flex-start', 
+    alignItems: 'center',
     backgroundColor: 'rgba(255,107,107,0.08)', 
-    borderRadius: sz(16), 
-    padding: sz(14),
-    marginBottom: sz(16),
+    borderRadius: sz(14),
+    padding: sz(12),
+    marginBottom: sz(12),
     borderWidth: 1,
     borderColor: 'rgba(255,107,107,0.2)',
   },
   jamIconBox: {
-    width: sz(40),
-    height: sz(40),
-    borderRadius: sz(12),
+    width: sz(36),
+    height: sz(36),
+    borderRadius: sz(10),
     backgroundColor: 'rgba(255,107,107,0.15)',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: sz(12),
+    marginRight: sz(10),
   },
   jamTitle: { 
     color: '#fff', 
-    fontSize: sz(15), 
+    fontSize: sz(14),
     fontWeight: '800',
-    marginBottom: sz(4),
+    marginBottom: sz(2),
   },
   jamSub: { 
     color: '#aab3c0', 
-    fontSize: sz(12), 
-    lineHeight: sz(17),
+    fontSize: sz(11),
+    lineHeight: sz(15),
   },
   logHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: sz(8),
-    paddingHorizontal: sz(12),
+    paddingVertical: sz(6),
+    paddingHorizontal: sz(10),
     backgroundColor: 'rgba(109,139,255,0.08)',
     borderRadius: sz(8),
-    marginBottom: sz(8),
+    marginBottom: sz(6),
   },
   logHeaderText: {
     color: '#6d8bff',
-    fontSize: sz(12),
+    fontSize: sz(11),
     fontWeight: '700',
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
   },
   logLine: {
-    paddingVertical: sz(4),
-    paddingHorizontal: sz(8),
+    paddingVertical: sz(3),
+    paddingHorizontal: sz(6),
     borderRadius: sz(6),
     marginBottom: 1,
   },
@@ -233,6 +291,6 @@ const s = themed(() => ({
     color: '#d0d7e2', 
     fontSize: sz(11), 
     fontFamily: 'monospace',
-    lineHeight: sz(16),
+    lineHeight: sz(15),
   },
 }));

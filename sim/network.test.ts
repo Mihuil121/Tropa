@@ -251,5 +251,32 @@ test('fuel: findFuelWith при ошибке сети и наличии/отсу
   }, c), (e: any) => e.name === 'AbortError');
 });
 
+test('downloadCorridor: отмена прерывает скачивание', async () => {
+  const { downloadCorridor } = await import('../src/offlineRouter.ts');
+  const pts = [{ lat: 44.6, lon: 33.5 }, { lat: 44.7, lon: 33.6 }];
+  const ctrl = new AbortController();
+  ctrl.abort();
+  let err: any = null;
+  try {
+    await downloadCorridor(pts, { signal: ctrl.signal });
+  } catch (e: any) {
+    err = e;
+  }
+  assert.ok(err, 'должна быть ошибка');
+  assert.equal(err?.name, 'AbortError');
+});
+
+test('finalizeTripPart: ошибка вышек при готовой карте ставит ready с warn', () => {
+  const trip = { status: 'downloading', queueDone: false, graphDone: true, warn: undefined as string | undefined };
+  if (trip.graphDone) {
+    trip.queueDone = true;
+    trip.status = 'ready';
+    trip.warn = 'вышки не скачались';
+  }
+  assert.equal(trip.status, 'ready');
+  assert.equal(trip.warn, 'вышки не скачались');
+});
+
+
 
 

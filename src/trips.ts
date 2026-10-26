@@ -1,9 +1,9 @@
 // Множественные поездки (скачанные офлайн-маршруты и их графы/карты)
 
 import { Directory, File, Paths } from 'expo-file-system';
-import type { Place, PlannedRoute, TravelMode } from './online';
-import { loadGraph, type Graph, type StoredGraph } from './offlineRouter';
-import { dlog, dlogError } from './debugLog';
+import type { Place, PlannedRoute, TravelMode } from './online.ts';
+import { loadGraph, type Graph, type StoredGraph } from './offlineRouter.ts';
+import { dlog, dlogError } from './debugLog.ts';
 
 export type TripStatus = 'queued' | 'downloading' | 'ready' | 'error';
 
@@ -200,23 +200,21 @@ export async function updateTrip(id: string, update: Omit<Partial<Trip>, 'progre
 
 /** Завершение частей скачивания (очередь/граф). Ставит ready только при завершении обеих частей. */
 export async function finalizeTripPart(id: string, part: 'queue' | 'graph', err?: string, mb?: number): Promise<void> {
+  if (err) {
+    await deleteTrip(id);
+    return;
+  }
   const list = await listTrips();
   const idx = list.findIndex((t) => t.id === id);
   if (idx < 0) return;
-  // Всё ниже синхронно, без await: два завершения подряд не затрут друг друга.
   const next: Trip = { ...list[idx] };
   if (mb != null && mb > 0) next.mb = mb;
-  if (err) {
-    next.status = 'error';
-    next.error = err;
-  } else {
-    if (part === 'queue') next.queueDone = true; else next.graphDone = true;
-    if (next.queueDone && next.graphDone && next.status !== 'error') {
-      next.status = 'ready';
-      next.error = undefined;
-      next.totalPct = 100;
-      next.progress = { map: 100, cells: 100, graph: 100 };
-    }
+  if (part === 'queue') next.queueDone = true; else next.graphDone = true;
+  if (next.queueDone && next.graphDone) {
+    next.status = 'ready';
+    next.error = undefined;
+    next.totalPct = 100;
+    next.progress = { map: 100, cells: 100, graph: 100 };
   }
   list[idx] = next;
   notifyTrips();
