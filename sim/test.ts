@@ -332,22 +332,19 @@ test('антиподмена (а): неподвижный телефон при 
   }
 
   let everOk = false;
-  let allSpoofedReasons = true;
   for (let i = 0; i < 30; i++) {
     t += 1;
     e.onMotion(t, 0.1, 0.05);
     e.onGps({ t, lat: 44.99 + i * 0.0003, lon: 34.10, accuracy: 4, speed: 38.9, bearing: 45 });
     const st = e.getState(t);
     if (st.gps === 'ok') everOk = true;
-    if (!st.gpsReason.includes('вышека') && !st.gpsReason.includes('сети') && !st.gpsReason.includes('скачок') && !st.gpsReason.includes('подменён')) {
-      allSpoofedReasons = false;
-    }
+    assert.ok(st.gpsReason.length > 0, 'gpsReason не должен быть пустым');
+    assert.ok(st.gpsReason.includes('скачок') || st.gpsReason.includes('вышека') || st.gpsReason.includes('сети') || st.gpsReason.includes('телефон стоит'));
   }
 
   const finalSt = e.getState(t);
   assert.equal(everOk, false, 'статус ни разу не должен стать ok');
   assert.equal(finalSt.gps, 'spoofed');
-  assert.ok(allSpoofedReasons);
   const dErr = Math.hypot((finalSt.lat - 44.59025) * 111320, (finalSt.lon - 33.50315) * 111320 * Math.cos(44.59025 * Math.PI / 180));
   assert.ok(dErr <= 100, `отклонение ${dErr.toFixed(1)} м должно быть <= 100 м`);
 });

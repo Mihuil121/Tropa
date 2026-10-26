@@ -784,7 +784,7 @@ export class NavEngine {
       const dt = t - this.prevGps.t;
       if (dt > 0) {
         const dJump = dist(xy, this.prevGps.xy);
-        const maxAllowed = 60 * Math.min(dt, 120) + 200;
+        const maxAllowed = this.allowedJump(t);
         if (dJump > maxAllowed) {
           reason ||= `скачок ${Math.round(dJump)} м за ${dt.toFixed(1)} с`;
           kind ||= 'jump';
@@ -794,7 +794,7 @@ export class NavEngine {
     }
 
     // 3b. Движение по датчикам: если GPS показывает > 12 км/ч, а телефон стоит
-    if ((this.stopped || this.ctx.movement === 'still') && (f.speed ?? 0) > 3.5) {
+    if ((this.stopped || (this.ctx.movement as string) === 'still') && (f.speed ?? 0) > 3.5) {
       reason ||= `GPS показывает ${Math.round((f.speed ?? 0) * 3.6)} км/ч, но телефон стоит`;
       kind ||= 'sensor';
       coherent = false;
@@ -824,12 +824,15 @@ export class NavEngine {
   private canReinitFromGps(f: GpsFix, xy: XY, acc: number): boolean {
     const t = f.t;
     if (this.lastReasonKind === 'net' || this.lastReasonKind === 'sensor' || this.lastReasonKind === 'signal') return false;
-    if (this.stopped || this.ctx.movement === 'still') return false;
+    if (this.stopped || (this.ctx.movement as string) === 'still') return false;
     if (t - this.lastStillT < 20) return false;
     if (this.coherentRun < 20) return false;
 
+    const dtGood = t - this.lastGoodGpsT;
+    const isLongPause = dtGood > 120;
+
     let distOk = false;
-    if (this.ekf.initialized && this.lastGoodGpsT > 0) {
+    if (!isLongPause && this.ekf.initialized && this.lastGoodGpsT > 0) {
       const dGood = dist(xy, { x: this.ekf.x[IX], y: this.ekf.x[IY] });
       const maxAllowed = this.allowedJump(t);
       distOk = dGood <= maxAllowed;
