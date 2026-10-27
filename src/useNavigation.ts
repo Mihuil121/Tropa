@@ -6,7 +6,8 @@ import { NavEngine, type NavState } from './core/engine';
 import { CellDb, CellLearner, cellKey, type CellId, type WifiAp } from './core/cells';
 import { MotionSensors } from './sensors';
 import { TripLog, loadLearned, saveLearned } from './data';
-import { beaconLocate } from './online';
+import { beaconLocate, mylnikovCell, mylnikovWifi } from './online';
+import { wifiKey } from './core/cells';
 import { ObdLink, type ObdState } from './obdLink';
 import CarSensors from '../modules/car-sensors';
 import { dlog, dlogError, dlogEvery } from './debugLog';
@@ -58,11 +59,17 @@ export function useNavigation() {
           return;
         }
 
-        // При старте проверяем: если последняя известная точка > 3 км от текущей сети — игнорируем старый подменный GPS
+        // «Последняя известная точка» — это кэш Android, он может быть подменённым и старым
+        // (так стрелка «уезжала» со скоростью 41 м/с на стоящем телефоне). Берём только свежую,
+        // без скорости и курса, и только если она согласуется с сетью.
         if (src === 'last') {
+          const age = (Date.now() - (loc.timestamp ?? 0)) / 1000;
+          if (!(age >= 0 && age < 10)) { dlog(`⚠ старая точка (${Math.round(age)} с назад) — игнорирую`); return; }
+          fix.speed = null; fix.bearing = null;
           const st = engine.getState(t);
-          if (st.coarse && Math.hypot((fix.lat - st.coarse.lat) * 111.32, (fix.lon - st.coarse.lon) * 111.32) > 3.0) {
-            dlog(`⚠ старая точка (${fix.lat.toFixed(4)},${fix.lon.toFixed(4)}) далека от сети (${st.coarse.lat.toFixed(4)},${st.coarse.lon.toFixed(4)}) — игнорируем`);
+          if (!st.coarse) { dlog('⚠ старая точка без проверки сетью — игнорирую'); return; }
+          if (Math.hypot((fix.lat - st.coarse.lat) * 111.32, (fix.lon - st.coarse.lon) * 111.32) > 3.0) {
+            dlog(`⚠ старая точка далека от сети — игнорирую`);
             return;
           }
         }
@@ -75,7 +82,7 @@ export function useNavigation() {
           dlog(`ядро: ready ${before.ready}→${after.ready}, gps ${before.gps}→${after.gps} ${after.gpsReason}`);
           voice.announceGpsStatus(after.gps, after.gpsReason);
         }
-        sensors.feedGps(t, c.heading, c.speed);
+        if (after.gps === 'ok') sensors.feedGps(t, fix.bearing, fix.speed);
         log.add({ e: 'gps', ...fix });
       } catch (e) { dlogError('onFix', e); }
     };
@@ -190,6 +197,9 @@ export function useNavigation() {
     // Вышки и Wi‑Fi раз в 5 с: определяем место, учим свою базу, спрашиваем beaconDB
     const asked = new Set<string>();     // какие вышки уже спрашивали у beaconDB
     let lastBeaconT = 0, lastLearnSaveT = now(), beaconFails = 0;
+    // База Мыльникова: свои счётчики, чтобы не долбить сервер
+    const askedMyl = new Set<string>();
+    let lastMylT = 0, mylFails = 0, mylTotal = 0;
     const cellTimer = setInterval(async () => {
       if (!CarSensors) return;
       try {
@@ -239,6 +249,41 @@ export function useNavigation() {
           } catch (e) {
             beaconFails++;
             dlogEvery('beaconDB-ошибка', 5, 'beaconDB недоступен:', String((e as Error)?.message ?? e));
+          }
+        }
+
+        // 3) База Мыльникова: вышка и самые сильные Wi‑Fi, которых ещё нет в нашей базе.
+        //    Не чаще раза в 10 с, не больше 4 запросов за раз и 400 за запуск; после ошибок — реже.
+        if (t - lastMylT > 10 * (1 + Math.min(mylFails, 6)) && mylTotal < 400 && (ids.length || wifi.length)) {
+          lastMylT = t;
+          const near = (r: { lat: number; lon: number }, km: number) =>
+            !st.coarse || Math.hypot((r.lat - st.coarse.lat) * 111.32, (r.lon - st.coarse.lon) * 78) < km; // отсекаем явный мусор
+          const jobs: Promise<void>[] = [];
+          const cell = ids.find((c) => c.registered && !engine.cellDb?.has(cellKey(c)) && !askedMyl.has(cellKey(c)));
+          if (cell) {
+            askedMyl.add(cellKey(cell)); mylTotal++;
+            jobs.push(mylnikovCell(cell).then((r) => {
+              dlog(`Мыльников: вышка ${cellKey(cell)} →`, r ? `${r.lat.toFixed(4)},${r.lon.toFixed(4)} ±${Math.round(r.accuracy)}м` : 'не знает');
+              if (r && near(r, 25)) { learner.putKnown(cellKey(cell), { lat: r.lat, lon: r.lon, range: Math.max(500, r.accuracy) }); applyLearned(); }
+            }));
+          }
+          const todo = [...wifi].sort((a, b) => b.dbm - a.dbm)
+            .filter((w) => !engine.cellDb?.has(wifiKey(w)) && !askedMyl.has(wifiKey(w))).slice(0, 4);
+          for (const w of todo) {
+            askedMyl.add(wifiKey(w)); mylTotal++;
+            jobs.push(mylnikovWifi(w.bssid).then((r) => {
+              if (r && near(r, 5)) { learner.putKnown(wifiKey(w), { lat: r.lat, lon: r.lon, range: Math.max(50, Math.min(300, r.accuracy)) }); applyLearned(); }
+            }));
+          }
+          if (jobs.length) {
+            try {
+              await Promise.all(jobs);
+              if (todo.length) dlogEvery('Мыльников-wifi', 3, `Мыльников: Wi‑Fi спросили ${todo.length}, в базе теперь ${engine.cellDb?.size ?? 0} записей`);
+              mylFails = 0;
+            } catch (e) {
+              mylFails++;
+              dlogEvery('Мыльников-ошибка', 5, 'база Мыльникова недоступна:', String((e as Error)?.message ?? e));
+            }
           }
         }
       } catch (e) { dlogError('вышки', e); }

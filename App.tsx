@@ -13,7 +13,7 @@ import { clearLearned, clearPlan, importFile, loadAll, loadSettings, savePlan, s
 import { downloadCorridor } from './src/offlineRouter';
 import { deleteTrip, finalizeTripPart, getTripAbortSignal, getTripRoute, listTrips, saveTrip, saveTripGraph, saveTripRoute, subscribeTrips, updateTrip, type BBox, type Trip } from './src/trips';
 import { addRecent, clearRecent, loadRecent, removeRecent, type RecentPlace } from './src/recent';
-import { findFuel, loadReports, matchesFuel, displayStatus, setReport, statusOf, type FuelKind, type FuelReports, type FuelStation } from './src/fuel';
+import { findFuel, type FuelStation } from './src/fuel';
 import { FuelSheet } from './src/ui/FuelSheet';
 import { PlaceCard, StopsPill } from './src/ui/PlaceCard';
 import { haversine } from './src/core/geo';
@@ -142,10 +142,7 @@ export default function App() {
   const [fuelList, setFuelList] = useState<FuelStation[]>([]);
   const [fuelNote, setFuelNote] = useState('');
   const [fuelReason, setFuelReason] = useState<'ok' | 'empty' | 'network' | undefined>(undefined);
-  const [fuelFilter, setFuelFilter] = useState<FuelKind | null>(null);
-  const [fuelReports, setFuelReports] = useState<FuelReports>({});
   const fuelCtrl = useRef<AbortController | null>(null);
-  useEffect(() => { loadReports().then(setFuelReports); }, []);
 
   async function loadFuel() {
     if (!nav?.ready) { setToast('Место ещё не определено — заправки ищем рядом с вами'); return; }
@@ -175,18 +172,14 @@ export default function App() {
     setFuelOn(false);
     pickDest({ name: st.name, detail: 'АЗС', lat: st.lat, lon: st.lon });
   }
-  function markFuel(st: FuelStation, status: 'yes' | 'low' | 'no') {
-    setReport(st.id, status).then(setFuelReports).catch((e) => dlogError('отметка заправки', e));
-    const label = status === 'yes' ? 'Есть топливо' : status === 'low' ? 'Мало / очередь' : 'Нет топлива';
-    setToast(`Отметка «${label}» сохранена (только на этом телефоне)`);
-  }
   const fuelGeo = useMemo<GeoJSON.FeatureCollection>(() => ({
     type: 'FeatureCollection',
-    features: !fuelOn ? [] : fuelList.filter((st) => matchesFuel(st, fuelFilter)).map((st) => {
-      const ds = displayStatus(fuelReports[st.id]);
-      return { type: 'Feature', properties: { name: st.name, c: ds.color }, geometry: { type: 'Point', coordinates: [st.lon, st.lat] } } as GeoJSON.Feature;
-    }),
-  }), [fuelOn, fuelList, fuelFilter, fuelReports]);
+    features: !fuelOn ? [] : fuelList.map((st) => ({
+      type: 'Feature',
+      properties: { name: st.name, c: C.blue },
+      geometry: { type: 'Point', coordinates: [st.lon, st.lat] },
+    } as GeoJSON.Feature)),
+  }), [fuelOn, fuelList]);
   const routePts = screen === 'preview' ? (typeof plans[mode] === 'object' ? (plans[mode] as PlannedRoute).points : null) : screen === 'nav' ? plan?.points ?? null : null;
   useEffect(() => {
     setPois([]);
@@ -1293,12 +1286,6 @@ export default function App() {
               { icon: 'gas-station' as IconName, active: fuelOn, onPress: toggleFuel },
               { icon: 'cog-outline', onPress: () => setSheet('settings') },
               { icon: view3d ? 'video-3d' : 'video-2d', active: view3d, onPress: () => { updateSettings({ ...settings, view3d: !view3d }); setFollow(true); } },
-              { icon: 'traffic-light-outline', active: showTraffic, onPress: () => {
-                if (!settings.gisKey) { setToast('Для пробок нужен бесплатный ключ 2ГИС — введите его в настройках'); setSheet('settings'); return; }
-                const on = !settings.traffic;
-                updateSettings({ ...settings, traffic: on });
-                setToast(on ? (carPts ? 'Пробки: красим маршрут' : 'Пробки покажутся на линии авто-маршрута') : 'Пробки выключены');
-              } },
               { icon: 'bug-outline', active: debug, onPress: () => setDebug((x) => !x) },
             ]} />
             <MapButton icon="navigation-variant" active={follow} onPress={() => {
@@ -1351,10 +1338,10 @@ export default function App() {
       )}
 
       {fuelOn && (screen === 'map' || screen === 'nav' || screen === 'preview') && (
-        <Appear key="fuel"><FuelSheet stations={fuelList} reports={fuelReports} filter={fuelFilter} onFilter={setFuelFilter} busy={fuelBusy} note={fuelNote} reason={fuelReason}
+        <Appear key="fuel"><FuelSheet stations={fuelList} busy={fuelBusy} note={fuelNote} reason={fuelReason}
           onRefresh={loadFuel} onClose={toggleFuel} onRoute={routeToFuel}
           onAddStop={screen === 'map' && !dest ? undefined : (st) => { setFuelOn(false); addStop({ name: st.name, lat: st.lat, lon: st.lon }); }}
-          onMark={markFuel} /></Appear>
+        /></Appear>
       )}
 
       {cand && (

@@ -815,6 +815,44 @@ export async function beaconLocate(cells: CellId[], wifi: WifiAp[], opts: { area
   return { lat: j.location.lat, lon: j.location.lng, accuracy: j.accuracy ?? 1000 };
 }
 
+// ---------------- Место по вышке / Wi‑Fi онлайн (база Мыльникова) ----------------
+
+/**
+ * Открытая база Александра Мыльникова (mylnikov.org): ~32 млн вышек и ~34 млн Wi‑Fi.
+ * Без ключа. Вторая страховка, когда beaconDB «не знает» (например, у крымских операторов).
+ * Wi‑Fi даёт десятки метров точности, вышка — сотни.
+ */
+const MYLNIKOV = 'https://api.mylnikov.org/geolocation';
+
+/** Ответ API → точка. 200 — найдено, 404 / нет data — нет. Принимаем и data.lat/lon, и data.location. */
+export function parseMylnikov(j: any): { lat: number; lon: number; accuracy: number } | null {
+  if (!j || (j.result !== undefined && Number(j.result) !== 200)) return null;
+  const d = j.data ?? j;
+  const lat = Number(d?.lat ?? d?.location?.lat), lon = Number(d?.lon ?? d?.lng ?? d?.location?.lon ?? d?.location?.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || (lat === 0 && lon === 0)) return null;
+  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+  const r = Number(d?.range ?? d?.accuracy);
+  return { lat, lon, accuracy: Number.isFinite(r) && r > 0 ? r : 1000 };
+}
+
+async function mylnikovGet(url: string, signal?: AbortSignal) {
+  if (isHostBad(MYLNIKOV)) throw new Error('база Мыльникова недавно не отвечала');
+  const r = await fetchText(url, { headers: { 'User-Agent': UA }, signal, timeoutMs: 8000 });
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`mylnikov ответил ${r.status}`);
+  let j: any = null;
+  try { j = JSON.parse(r.text); } catch {}
+  return parseMylnikov(j);
+}
+
+export function mylnikovCell(c: CellId, signal?: AbortSignal) {
+  return mylnikovGet(`${MYLNIKOV}/cell?v=1.1&data=open&mcc=${c.mcc}&mnc=${c.mnc}&lac=${c.area}&cellid=${c.cid}`, signal);
+}
+
+export function mylnikovWifi(bssid: string, signal?: AbortSignal) {
+  return mylnikovGet(`${MYLNIKOV}/wifi?v=1.1&data=open&bssid=${encodeURIComponent(bssid.toUpperCase())}`, signal);
+}
+
 // ---------------- Форматирование ----------------
 
 export function fmtDuration(s: number): string {
