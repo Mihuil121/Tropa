@@ -74,7 +74,17 @@ export function NavBottom({ nav, plan, onStop, onHere, onTurnNow, details, traff
   const { wide } = useWide();
   const [open, setOpen] = useState(false);
   const gps = nav ? GPS_LABEL[nav.gps] : GPS_LABEL.none;
-  const trouble = nav && nav.ready && (nav.gps === 'jammed' || nav.gps === 'spoofed');
+  const trouble = !!(nav && nav.ready && (nav.gps === 'jammed' || nav.gps === 'spoofed'));
+  // Плашка не должна мигать и закрывать маршрут: показываем, только если проблема держится 10 с,
+  // и даём спрятать на 10 минут. Подробности — в раскрывающейся панели.
+  const [troubleShown, setTroubleShown] = useState(false);
+  const [hiddenUntil, setHiddenUntil] = useState(0);
+  useEffect(() => {
+    if (!trouble) { setTroubleShown(false); return; }
+    const id = setTimeout(() => setTroubleShown(true), 10_000);
+    return () => clearTimeout(id);
+  }, [trouble]);
+  const showStrip = trouble && troubleShown && Date.now() > hiddenUntil;
   // Оставшееся время: плановое, пропорционально оставшемуся пути
   const left = nav?.routeLeft ?? null;
   // (маршрут из файла не знает времени — считаем по типичной скорости)
@@ -90,54 +100,14 @@ export function NavBottom({ nav, plan, onStop, onHere, onTurnNow, details, traff
       {extra}
       {!!weather?.some((w) => w.danger.length) && <View style={{ marginBottom: 8 }}><WeatherRoute items={weather} compact /></View>}
 
-      {trouble && (
-        <View style={s.alert}>
-          <View style={s.alertHeader}>
-            <View style={s.alertIconBox}>
-              <Icon 
-                name={nav!.gps === 'spoofed' ? 'alert-circle' : 'satellite-variant'} 
-                size={24} 
-                color="#fff" 
-              />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={s.alertTitle}>
-                {nav!.gps === 'spoofed' ? '⚠️ GPS подменён' : '📡 GPS заглушён'}
-              </Text>
-              {!compact && <Text style={s.alertSub}>
-                {nav!.gps === 'spoofed' 
-                  ? 'Обнаружена подмена координат — используем датчики и вышки'
-                  : 'Сигнал спутников недоступен — определяем место по альтернативным источникам'}
-              </Text>}
-            </View>
-          </View>
-          
-          <View style={s.alertStats}>
-            <View style={s.statBox}>
-              <Text style={s.statLabel}>Метод</Text>
-              <Text style={s.statValue} numberOfLines={1}>{nav!.mode}</Text>
-            </View>
-            <View style={s.statBox}>
-              <Text style={s.statLabel}>Точность</Text>
-              <Text style={s.statValue}>±{fmtDistance(nav!.sigma)}</Text>
-            </View>
-            <View style={s.statBox}>
-              <Text style={s.statLabel}>Источник</Text>
-              <Text style={s.statValue} numberOfLines={1}>{nav!.context?.split(' ')[0] || 'Датчики'}</Text>
-            </View>
-          </View>
-
-          <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
-            <Button small kind="secondary" text="🎯 Я здесь" onPress={onHere} />
-            {!nav!.walking && <Button small kind="secondary" text="↩️ Поворот сейчас" onPress={onTurnNow} />}
-          </View>
-          
-          {!compact && <View style={s.alertTip}>
-            <Icon name="information-outline" size={14} color={C.warnText} style={{ marginRight: 4 }} />
-            <Text style={s.alertTipText}>
-              Используйте кнопки выше, чтобы скорректировать позицию при необходимости
-            </Text>
-          </View>}
+      {showStrip && (
+        <View style={s.alertStrip}>
+          <Icon name={nav!.gps === 'spoofed' ? 'alert-circle' : 'satellite-variant'} size={sz(18)} color={C.red} />
+          <Text style={s.alertStripText} numberOfLines={1}>
+            {nav!.gps === 'spoofed' ? 'GPS подменён' : 'GPS заглушён'} · по датчикам ±{fmtDistance(nav!.sigma)}
+          </Text>
+          <Pressable onPress={onHere} hitSlop={8} style={s.alertStripBtn}><Text style={s.alertStripBtnText}>Я здесь</Text></Pressable>
+          <Pressable onPress={() => setHiddenUntil(Date.now() + 10 * 60_000)} hitSlop={12}><Icon name="close" size={sz(18)} color={C.redText} /></Pressable>
         </View>
       )}
 
@@ -170,6 +140,10 @@ export function NavBottom({ nav, plan, onStop, onHere, onTurnNow, details, traff
             <Chip text={gps.text} color={gps.color} />
             <Chip text={nav?.context ?? 'Датчики…'} color={C.blue} />
           </View>
+          {trouble && !nav!.walking && <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+            <Button small kind="secondary" text="🎯 Я здесь" onPress={onHere} />
+            <Button small kind="secondary" text="↩️ Поворот сейчас" onPress={onTurnNow} />
+          </View>}
           <View style={{ marginTop: 6 }}>{details}</View>
         </View>
       )}
@@ -228,6 +202,14 @@ const s = themed(() => ({
     borderColor: C.red,
     ...shadow 
   },
+  alertStrip: {
+    flexDirection: 'row', alignItems: 'center', gap: sz(8),
+    backgroundColor: C.redSoft, borderRadius: sz(14), borderWidth: 1, borderColor: C.red,
+    paddingHorizontal: sz(10), paddingVertical: sz(6), marginBottom: sz(6),
+  },
+  alertStripText: { flex: 1, fontSize: sz(13), fontWeight: '700', color: C.red },
+  alertStripBtn: { backgroundColor: C.red, borderRadius: sz(10), paddingHorizontal: sz(10), paddingVertical: sz(4) },
+  alertStripBtnText: { color: '#fff', fontSize: sz(12), fontWeight: '700' },
   alertHeader: { 
     flexDirection: 'row', 
     alignItems: 'flex-start',

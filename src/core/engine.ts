@@ -66,6 +66,7 @@ export type NavState = {
   coarse: { src: string; accuracy: number; age: number; lat: number; lon: number } | null;
   cellsKnown: number;       // сколько видимых вышек/Wi‑Fi есть в базе
   wifiSeen: number;
+  dbg: string;              // внутренние признаки «стоим/едем» — для журнала
 };
 
 const CHI2_2DOF = 13.8;   // 99.9%
@@ -104,6 +105,7 @@ export class NavEngine {
   private lastCoarse: { src: string; accuracy: number; t: number; lat: number; lon: number } | null = null;
   private cellDisagree = 0;
   private coarseHist: { t: number; xy: XY; acc: number }[] = [];
+  private vibShakeRun = 0;
   private coarseStill = false;   // последние сетевые точки не сдвинулись — стоим
 
   gpsStatus: GpsStatus = 'none';
@@ -260,6 +262,13 @@ export class NavEngine {
     this.gyroSum = 0; this.gyroN = 0;
     const gpsLiveNow = this.gpsStatus === 'ok' && this.lastGpsSpeed !== null && t - this.lastGpsT < 2;
     this.ctx.onSecond(t, tiltRate, gpsLiveNow ? this.lastGpsSpeed : null);
+    // Контекст «стоим» выучен по честному GPS и сам не снимается, пока GPS не «ок» — а он не станет «ок»,
+    // пока «стоим» мешает принять точки со скоростью. Рвём этот круг по тряске закреплённого телефона.
+    if (!gpsLiveNow && this.ctx.movement === 'still' && this.ctx.holding === 'fixed') {
+      const thrNow = this.vibStill > 0 && this.vibMove > 2 * this.vibStill ? Math.sqrt(this.vibStill * this.vibMove) : 0.12;
+      this.vibShakeRun = vib > thrNow ? this.vibShakeRun + 1 : 0;
+      if (this.vibShakeRun >= 5) { this.ctx.movement = 'unknown'; this.vibShakeRun = 0; this.lastFix = 'тряска — это не стоянка'; }
+    } else this.vibShakeRun = 0;
 
     // Wi‑Fi вокруг не меняется давно — значит, стоим (даже если GPS подменён и «едет»)
     if (!gpsLiveNow && this.ekf.initialized && this.ctx.movement !== 'walking') {
@@ -644,7 +653,17 @@ export class NavEngine {
       this.ekf.x[IV] = vBefore;
       this.pf?.weightPoint(xy, fix.accuracy * 1.5);
       // Сеть дважды показала то же место, колёс и смены Wi‑Fi нет — стоим: гасим скорость, набранную «по привычке»
-      if (this.coarseStill && this.radioMoveRun < 2 && t - this.lastObdT >= 3 && this.ctx.movement !== 'walking') this.speedUpd(0, 0.5);
+      if (this.coarseStill && this.radioMoveRun < 2 && t - this.lastObdT >= 3 && this.ctx.movement !== 'walking') {
+        this.speedUpd(0, 0.5);
+        // Сеть дважды показала то же место — фиксируем «стоим»: отключаются фильтр частиц, «обычная скорость» и счисление.
+        // Снимается само: сеть сдвинулась (stillMoveVotes), Wi‑Fi вокруг сменился или пошли шаги.
+        if (!this.holdStill) {
+          this.holdStill = true; this.holdByRadio = false;
+          this.stillAnchor = { x: this.ekf.x[IX], y: this.ekf.x[IY] };
+          this.stillMoveVotes = 0; this.moveVibRun = 0;
+          this.lastFix = 'стоим (сеть показывает то же место)';
+        }
+      }
     }
 
     // Страховка от «самоуверенного» фильтра: если вышки 30 с подряд говорят, что мы
@@ -883,8 +902,12 @@ export class NavEngine {
       }
     }
 
-    // 3b. Движение по датчикам: если GPS показывает > 12 км/ч, а телефон стоит
-    if ((this.stopped || (this.ctx.movement as string) === 'still') && (f.speed ?? 0) > 3.5) {
+    // 3b. Движение по датчикам: если GPS показывает > 12 км/ч, а телефон стоит.
+    // Но разгон от светофора — не подмена: акселерометр обновляется раз в секунду и «отстаёт»,
+    // а скорость у честного GPS растёт плавно (подмена даёт сразу десятки м/с).
+    const accelerating = this.gpsStatus === 'ok' && !!this.prevGps && f.t - this.prevGps.t < 3
+      && this.prevGps.speed != null && f.speed != null && Math.abs(f.speed - this.prevGps.speed) < 4;
+    if (!accelerating && (this.stopped || (this.ctx.movement as string) === 'still') && (f.speed ?? 0) > 3.5) {
       reason ||= `GPS показывает ${Math.round((f.speed ?? 0) * 3.6)} км/ч, но телефон стоит`;
       kind ||= 'sensor';
       coherent = false;
@@ -1064,6 +1087,7 @@ export class NavEngine {
       coarse: this.lastCoarse ? { src: this.lastCoarse.src, accuracy: this.lastCoarse.accuracy, age: t - this.lastCoarse.t, lat: this.lastCoarse.lat, lon: this.lastCoarse.lon } : null,
       cellsKnown: this.lastCellsKnown,
       wifiSeen: this.lastWifiN,
+      dbg: `v=${e.x[IV].toFixed(1)}м/с hold=${this.holdStill ? 1 : 0}${this.holdByRadio ? 'R' : ''} частицы=${this.pf?.active ? 1 : 0} wifiСтоим=${this.radioStillSince !== null ? 1 : 0} wifiДвиж=${this.radioMoveRun} сетьСтоит=${this.coarseStill ? 1 : 0} движ=${this.ctx.movement} телефон=${this.ctx.holding} stopped=${this.stopped ? 1 : 0}`,
     };
   }
 

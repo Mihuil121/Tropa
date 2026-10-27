@@ -574,3 +574,29 @@ test('Мыльников: разбор ответа API по вышке и Wi‑
   assert.equal(parseMylnikov(null), null);
   assert.equal(parseMylnikov({ result: 200, data: { lat: 44.6, lon: 33.5 } })!.accuracy, 1000);
 });
+
+
+test('Антидрейф: стоим на месте, GPS подменён, сеть редкая — скорость и уход малы (с маршрутом и без)', async () => {
+  const { run } = await import('./standing_hand.ts');
+  for (const withRoute of [false, true]) {
+    const r = run(withRoute);
+    assert.ok(r.maxKmh <= 6, `скорость ${r.maxKmh} км/ч (маршрут: ${withRoute})`);
+    assert.ok(r.driftM <= 60, `уход ${r.driftM} м (маршрут: ${withRoute})`);
+  }
+});
+
+test('GPS не «залипает» в подмене: стоянка, потом честный разгон — статус возвращается в ok', () => {
+  const e = new NavEngine();
+  const T0 = 1_790_000_000, lat0 = 55.75, lon0 = 37.6, M = 1 / 111320;
+  let st = e.getState(T0);
+  for (let s = 0; s < 80; s++) {
+    const t = T0 + s;
+    const v = s < 20 ? 0 : Math.min(15, (s - 20) * 1.2);
+    const y = s < 20 ? 0 : (Math.min(s - 20, 12.5) ** 2 * 0.6 + Math.max(0, s - 32.5) * 15);
+    e.onGnssSignal(t, { used: 9, cn0Top: 44, cn0Std: 5, agc: 50 });
+    e.onMotion(t, 0.1, v < 0.1 ? 0.05 : 0.15 + 0.012 * v, 0.3);
+    e.onGps({ t, lat: lat0 + y * M, lon: lon0, accuracy: 5, speed: v, bearing: v > 1 ? 0 : null });
+    st = e.getState(t);
+  }
+  assert.equal(st.gps, 'ok', `статус ${st.gps}: ${st.gpsReason}`);
+});

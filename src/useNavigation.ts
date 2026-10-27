@@ -295,7 +295,7 @@ export function useNavigation() {
       try {
         const st = engine.getState(now());
         setNav(st);
-        if (k % 15 === 0) dlog(`состояние: ready=${st.ready} gps=${st.gps} (${st.gpsReason}) ±${Math.round(st.sigma)}м ведёт: ${st.mode}; ${st.context}`);
+        if (k % 15 === 0) dlog(`состояние: ready=${st.ready} gps=${st.gps} (${st.gpsReason}) ±${Math.round(st.sigma)}м ведёт: ${st.mode}; ${st.context} | ${st.dbg}`);
       } catch (e) { dlogError('getState', e); }
       if (++k % 10 === 0) { try { log.flush(); } catch (e) { dlogError('журнал', e); } }
     }, 1000);
