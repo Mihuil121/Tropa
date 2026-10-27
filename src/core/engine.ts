@@ -103,6 +103,8 @@ export class NavEngine {
   private gnssUsed: number | null = null;
   private lastCoarse: { src: string; accuracy: number; t: number; lat: number; lon: number } | null = null;
   private cellDisagree = 0;
+  private coarseHist: { t: number; xy: XY; acc: number }[] = [];
+  private coarseStill = false;   // последние сетевые точки не сдвинулись — стоим
 
   gpsStatus: GpsStatus = 'none';
   gpsReason = '';
@@ -367,6 +369,7 @@ export class NavEngine {
   private canGuessSpeed(t: number): boolean {
     if (t - this.startTime < 25 && !this.cruiseLearned) return false;
     if (this.radioStillSince !== null && t - this.radioStillSince >= 12) return false;
+    if (this.gpsStatus !== 'ok' && this.coarseStill && this.radioMoveRun < 2) return false;
     return this.cruiseLearned || !!this.route || this.radioMoveRun >= 1;
   }
 
@@ -610,6 +613,13 @@ export class NavEngine {
   private applyCoarseFix(t: number, fix: CellFix, src: string) {
     this.ensureFrame(fix);
     const xy = this.frame!.toXY(fix);
+    // Две грубые точки подряд в пределах своей погрешности — на месте (в машине за минуту уезжаем на километр)
+    // Сравниваем с точкой не моложе 20 с и только для точных источников (сеть/Wi‑Fi, не вышка на километры).
+    this.coarseHist.push({ t, xy, acc: fix.accuracy });
+    while (this.coarseHist.length && t - this.coarseHist[0].t > 150) this.coarseHist.shift();
+    const refFix = [...this.coarseHist].reverse().find((h) => t - h.t >= 20);
+    this.coarseStill = !!refFix && fix.accuracy < 300 && refFix.acc < 300
+      && dist(xy, refFix.xy) < 2.5 * Math.max(fix.accuracy, refFix.acc) + 60;
     this.lastCell = { ...fix, t, xy };
     this.lastCoarse = { src, accuracy: fix.accuracy, t, lat: fix.lat, lon: fix.lon };
     // Стоим без GPS, а Wi‑Fi/вышки дважды подряд показывают другое место — значит, едем/идём
@@ -626,8 +636,16 @@ export class NavEngine {
     }
     // Грубые источники включаем, только если сами уже «потерялись» сильнее, чем их точность,
     // иначе они больше портят, чем помогают.
+    // Грубая точка меряет только место. Скорость из неё не берём: невязка в сотню метров через
+    // ковариацию «позиция–скорость» иначе превращается в фальшивые 10–30 км/ч, и стоящий телефон «едет».
+    const vBefore = this.ekf.x[IV];
     if (this.ekf.posSigma > fix.accuracy * 0.3) this.ekf.update(this.ekf.posMeas(xy.x, xy.y, fix.accuracy), CHI2_2DOF * 2);
-    if (this.gpsStatus !== 'ok') this.pf?.weightPoint(xy, fix.accuracy * 1.5);
+    if (this.gpsStatus !== 'ok') {
+      this.ekf.x[IV] = vBefore;
+      this.pf?.weightPoint(xy, fix.accuracy * 1.5);
+      // Сеть дважды показала то же место, колёс и смены Wi‑Fi нет — стоим: гасим скорость, набранную «по привычке»
+      if (this.coarseStill && this.radioMoveRun < 2 && t - this.lastObdT >= 3 && this.ctx.movement !== 'walking') this.speedUpd(0, 0.5);
+    }
 
     // Страховка от «самоуверенного» фильтра: если вышки 30 с подряд говорят, что мы
     // далеко от того места, где фильтр себя считает, — верим вышкам и начинаем заново.
